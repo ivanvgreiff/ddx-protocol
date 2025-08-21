@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { Button } from "@/components/ui/button"
@@ -11,17 +12,123 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Plus, DollarSign, AlertTriangle } from 'lucide-react'
 
-// Mock wallet context
+// Real wallet context hook
 const useWallet = () => {
-  const [account, setAccount] = useState<string | null>("0x1234567890123456789012345678901234567890")
+  const [account, setAccount] = useState<string | null>(null)
+
+  useEffect(() => {
+    // Check if already connected
+    const checkConnection = async () => {
+      if (typeof window !== 'undefined' && (window as any).ethereum) {
+        try {
+          const accounts = await (window as any).ethereum.request({
+            method: 'eth_accounts'
+          })
+          if (accounts.length > 0) {
+            setAccount(accounts[0])
+          }
+        } catch (error) {
+          console.error('Failed to check existing connection:', error)
+        }
+      }
+    }
+    checkConnection()
+  }, [])
+
   const sendTransaction = async (txData: any) => {
-    console.log('Sending transaction:', txData)
-    return { hash: '0xabc123...', wait: () => Promise.resolve() }
+    if (typeof window !== 'undefined' && (window as any).ethereum) {
+      try {
+        const txHash = await (window as any).ethereum.request({
+          method: 'eth_sendTransaction',
+          params: [txData],
+        })
+        
+        // Return a transaction object with wait method
+        return {
+          hash: txHash,
+          wait: async () => {
+            // Proper receipt waiting implementation
+            const provider = new (window as any).ethereum
+            let receipt = null
+            while (!receipt) {
+              try {
+                receipt = await (window as any).ethereum.request({
+                  method: 'eth_getTransactionReceipt',
+                  params: [txHash]
+                })
+                if (!receipt) {
+                  await new Promise(resolve => setTimeout(resolve, 1000))
+                }
+              } catch (error) {
+                await new Promise(resolve => setTimeout(resolve, 1000))
+              }
+            }
+            return receipt
+          }
+        }
+      } catch (error) {
+        console.error('Transaction failed:', error)
+        throw error
+      }
+    }
+    throw new Error('MetaMask not available')
   }
+
   return { account, sendTransaction }
 }
 
+// Real data fetching hook
+const useQuery = (key: string, fetchFn: () => Promise<any>, options?: any) => {
+  const [data, setData] = useState<any>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<any>(null)
+
+  useEffect(() => {
+    if (options?.enabled === false) return
+
+    const fetchData = async () => {
+      setIsLoading(true)
+      setError(null)
+      try {
+        const result = await fetchFn()
+        setData(result)
+      } catch (err) {
+        setError(err)
+        console.error(`Error fetching ${key}:`, err)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    if (options?.enabled !== false) {
+      fetchData()
+    }
+  }, [key, options?.enabled])
+
+  return { data, isLoading, error }
+}
+
+// Toast notification system (simplified)
+const toast = {
+  success: (message: string) => {
+    console.log('✅', message)
+    alert(`Success: ${message}`)
+  },
+  error: (message: string) => {
+    console.error('❌', message)
+    alert(`Error: ${message}`)
+  },
+  loading: (message: string) => {
+    console.log('⏳', message)
+    return Math.random() // Return a simple ID
+  },
+  dismiss: (id?: any) => {
+    console.log('Toast dismissed')
+  }
+}
+
 export default function CreateOptionPage() {
+  const router = useRouter()
   const { account, sendTransaction } = useWallet()
   const [formData, setFormData] = useState({
     underlyingToken: '',
@@ -38,6 +145,17 @@ export default function CreateOptionPage() {
   const [isCreating, setIsCreating] = useState(false)
   const [contractDeploymentInfo, setContractDeploymentInfo] = useState<any>(null)
 
+  // Fetch oracle prices for token selection
+  const { data: oraclePrices } = useQuery('oraclePrices', async () => {
+    const response = await fetch('/api/oracle/prices')
+    if (!response.ok) {
+      throw new Error('Failed to fetch oracle prices')
+    }
+    return await response.json()
+  }, {
+    enabled: false // Don't auto-fetch on page load
+  })
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
     setFormData(prev => ({
@@ -49,9 +167,10 @@ export default function CreateOptionPage() {
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text)
-      alert('Copied to clipboard!')
+      toast.success('Copied to clipboard!')
     } catch (error) {
       console.error('Failed to copy:', error)
+      toast.error('Failed to copy')
     }
   }
 
@@ -59,44 +178,197 @@ export default function CreateOptionPage() {
     e.preventDefault()
     
     if (!account) {
-      alert('Please connect your wallet first')
+      toast.error('Please connect your wallet first')
       return
     }
 
+    console.log('Wallet address:', account)
+    console.log('Network info from MetaMask:', (window as any).ethereum?.networkVersion)
+    console.log('Option parameters:', {
+      optionType,
+      underlyingToken: formData.underlyingToken,
+      strikeToken: formData.strikeToken,
+      optionSize: formData.optionSize,
+      oracle: formData.oracle
+    })
+
     setIsCreating(true)
     
+    // Show initial loading message
+    const loadingToast = toast.loading('Preparing transactions...')
+    
     try {
-      // Mock API call
-      console.log('Creating option with data:', {
+      // Step 1: Get transaction data from backend
+      const requestData = {
         ...formData,
         userAddress: account,
         payoffType: payoffType
+      }
+      const endpoint = optionType === 'call' ? '/api/option/create-call' : '/api/option/create-put'
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestData)
       })
       
-      // Simulate transaction creation
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      if (!response.ok) {
+        throw new Error('Failed to prepare transactions')
+      }
       
-      // Mock successful deployment
-      setContractDeploymentInfo({
-        txHash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
-        contractAddress: '0xabcdef1234567890abcdef1234567890abcdef12'
-      })
+      const data = await response.json()
       
-      // Reset form
-      setFormData({
-        underlyingToken: '',
-        strikeToken: '',
-        underlyingSymbol: '',
-        strikeSymbol: '',
-        strikePrice: '',
-        optionSize: '',
-        premium: '',
-        oracle: ''
-      })
+      // Check if backend detected transaction would fail
+      if (!data.success) {
+        const errorMsg = data.details || data.error || 'Unknown error'
+        toast.dismiss(loadingToast)
+        toast.error(`Contract Error: ${errorMsg}`)
+        return
+      }
       
-    } catch (error) {
+      if (data.success && data.data) {
+        const { approveTransaction, createTransaction, tokenToApprove, amountToApprove, optionsBookAddress } = data.data
+        
+        // Step 2: Check current allowance
+        toast.dismiss(loadingToast)
+        toast.loading('Checking token allowance...')
+        
+        // Simplified allowance check for frontend
+        console.log('Required allowance check for:', {
+          tokenToApprove,
+          amountToApprove,
+          optionsBookAddress
+        })
+        
+        // Step 3: Send separate approval transaction
+        toast.dismiss()
+        toast.loading('Please approve token spending... (Transaction 1/2)')
+        
+        console.log('Sending approval transaction:', approveTransaction)
+        const approveTx = await sendTransaction(approveTransaction)
+        
+        if (approveTx) {
+          toast.loading('Waiting for approval confirmation... (Transaction 1/2)')
+          await approveTx.wait()
+          toast.success('✅ Token approval confirmed!')
+        } else {
+          throw new Error('Approval transaction failed')
+        }
+        
+        // Step 4: Send separate option creation transaction
+        toast.loading('Please confirm option creation... (Transaction 2/2)')
+        
+        console.log('Sending option creation transaction:', createTransaction)
+        console.log('🔍 DEBUG: Transaction details:')
+        console.log('  - To:', createTransaction.to)
+        console.log('  - Data length:', createTransaction.data?.length)
+        console.log('  - Gas estimation...')
+        
+        const tx = await sendTransaction(createTransaction)
+        
+        if (tx) {
+          toast.loading('Waiting for option creation confirmation...')
+          
+          // Wait for confirmation
+          const receipt = await tx.wait()
+          const deployTxHash = tx.hash
+          
+          toast.success('Option created successfully!')
+          
+          // Extract contract address from the transaction logs
+          let contractAddress = null
+          try {
+            console.log('Extracting contract address from transaction receipt...')
+            
+            // Look for OptionCreated event in the logs
+            const optionCreatedLog = receipt.logs?.find((log: any) => {
+              return log.topics && log.topics.length === 3
+            })
+            
+            if (optionCreatedLog) {
+              // Extract contract address from log
+              contractAddress = '0x' + optionCreatedLog.topics[2].slice(26)
+              console.log('✅ Extracted contract address from logs:', contractAddress)
+            }
+          } catch (error) {
+            console.warn('Failed to extract contract address from logs:', error)
+          }
+          
+          // Auto-register the contract in the database
+          if (contractAddress) {
+            try {
+              console.log('Auto-registering contract in database...')
+              await fetch('/api/contracts/auto-register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  transactionHash: deployTxHash,
+                  contractAddress: contractAddress,
+                  optionType: optionType,
+                  shortAddress: account,
+                  underlyingToken: formData.underlyingToken,
+                  strikeToken: formData.strikeToken,
+                  underlyingSymbol: formData.underlyingSymbol,
+                  strikeSymbol: formData.strikeSymbol,
+                  strikePrice: formData.strikePrice,
+                  optionSize: formData.optionSize,
+                  premium: formData.premium,
+                  oracle: formData.oracle
+                })
+              })
+              console.log('✅ Contract auto-registered successfully')
+            } catch (error) {
+              console.warn('Failed to auto-register contract:', error)
+            }
+          }
+          
+          // Fallback: use transaction hash if we can't get the contract address
+          if (!contractAddress) {
+            contractAddress = `Transaction: ${deployTxHash.substring(0, 10)}...`
+          }
+          
+          toast.success(`${optionType === 'call' ? 'Call' : 'Put'} option contract deployed at: ${contractAddress}`)
+          console.log('Deploy transaction hash:', deployTxHash)
+          console.log('Contract address:', contractAddress)
+          
+          // Show success message
+          setContractDeploymentInfo({
+            txHash: deployTxHash,
+            contractAddress: contractAddress
+          })
+          
+          // Reset form
+          setFormData({
+            underlyingToken: '',
+            strikeToken: '',
+            underlyingSymbol: '',
+            strikeSymbol: '',
+            strikePrice: '',
+            optionSize: '',
+            premium: '',
+            oracle: ''
+          })
+        }
+      }
+    } catch (error: any) {
       console.error('Error creating option:', error)
-      alert('Failed to create option contract')
+      
+      // Dismiss any loading toasts
+      toast.dismiss()
+      
+      // Handle specific error types
+      let errorMessage = 'Failed to create option contract'
+      
+      if (error.code === 4001) {
+        errorMessage = 'Transaction cancelled by user'
+      } else if (error.message && error.message.includes('insufficient funds')) {
+        errorMessage = 'Insufficient ETH for gas fees'
+      } else if (error.message && error.message.includes('missing revert data')) {
+        errorMessage = `Transaction failed - likely insufficient tokens. For ${optionType} options, you need ${formData.optionSize} ${optionType === 'call' ? formData.underlyingSymbol : formData.strikeSymbol} tokens in your wallet.`
+      } else if (error.message) {
+        errorMessage = error.message
+      }
+      
+      toast.error(errorMessage)
     } finally {
       setIsCreating(false)
     }
@@ -352,7 +624,7 @@ export default function CreateOptionPage() {
               </div>
               
               <Button 
-                onClick={() => window.location.href = `/option/${contractDeploymentInfo.contractAddress}`}
+                onClick={() => router.push(`/option/${contractDeploymentInfo.contractAddress}`)}
                 className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90"
               >
                 View Contract Details
@@ -361,6 +633,28 @@ export default function CreateOptionPage() {
               <p className="text-xs text-muted-foreground text-center">
                 Click the button above when ready to manage your contract
               </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {oraclePrices?.prices && (
+          <Card className="mt-8">
+            <CardHeader>
+              <CardTitle>Available Tokens</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-muted-foreground mb-4">Current tokens in the oracle:</p>
+              <ul className="space-y-2">
+                {oraclePrices.prices.map((price: any, index: number) => (
+                  <li key={index} className="flex justify-between items-center p-3 bg-muted rounded-lg">
+                    <span className="font-medium">{price.symbol}:</span>
+                    <div className="text-right">
+                      <div className="font-mono">{price.realPrice}</div>
+                      <div className="text-xs text-muted-foreground">Address: {price.tokenAddress}</div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
             </CardContent>
           </Card>
         )}

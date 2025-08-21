@@ -14,23 +14,23 @@ export function Header() {
           <div className="flex items-center">
             <div className="flex-shrink-0">
               <a href="/">
-                <h1 className="text-2xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent hover:opacity-80 transition-opacity cursor-pointer">
-                  DerivX
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent animate-gradient-strong hover:opacity-80 transition-opacity cursor-pointer">
+                  DDX
                 </h1>
               </a>
             </div>
             <nav className="hidden md:ml-10 md:flex md:space-x-8">
-              <a href="/" className="text-foreground hover:text-primary transition-colors">
-                Dashboard
-              </a>
               <a href="/market" className="text-foreground hover:text-primary transition-colors">
                 Options Book
               </a>
-              <a href="/create" className="text-foreground hover:text-primary transition-colors">
-                Create Option
-              </a>
               <a href="/my-options" className="text-foreground hover:text-primary transition-colors">
                 Futures Book
+              </a>
+              <a href="/genie" className="text-foreground hover:text-primary transition-colors">
+                Genie Book
+              </a>
+              <a href="/create" className="text-foreground hover:text-primary transition-colors">
+                Draft Contract
               </a>
             </nav>
           </div>
@@ -52,17 +52,17 @@ export function Header() {
         {isMenuOpen && (
           <div className="md:hidden">
             <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
-              <a href="/" className="block px-3 py-2 text-foreground hover:text-primary">
-                Dashboard
-              </a>
               <a href="/market" className="block px-3 py-2 text-foreground hover:text-primary">
                 Options Book
               </a>
-              <a href="/create" className="block px-3 py-2 text-foreground hover:text-primary">
-                Create Option
-              </a>
               <a href="/my-options" className="block px-3 py-2 text-foreground hover:text-primary">
                 Futures Book
+              </a>
+              <a href="/genie" className="block px-3 py-2 text-foreground hover:text-primary">
+                Genie Book
+              </a>
+              <a href="/create" className="block px-3 py-2 text-foreground hover:text-primary">
+                Draft Contract
               </a>
               <div className="px-3 py-2">
                 <Button variant="outline" size="sm" className="w-full bg-transparent">

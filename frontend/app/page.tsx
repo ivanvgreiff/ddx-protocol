@@ -222,14 +222,12 @@ export default function HomePage() {
       <main className="container mx-auto px-4 py-12">
         <div className="text-center mb-16">
           <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-6xl">
-            Trade Derivatives{" "}
+            Blockchain Layer-3 Protocol for
+            <br />
             <span className="bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent animate-gradient">
-              Decentralized
+              Decentralized Derivatives Exchange
             </span>
           </h1>
-          <p className="mt-6 text-lg leading-8 text-muted-foreground max-w-2xl mx-auto">
-            Blockchain Layer-3 Protocol for Decentralized Derivatives Exchange
-          </p>
         </div>
 
         {/* Stats Grid */}
@@ -311,15 +309,7 @@ export default function HomePage() {
             onClick={() => router.push('/market')}
           >
             <TrendingUp className="h-5 w-5" />
-            Browse Options
-          </Button>
-          <Button
-            variant="outline"
-            className="h-16 flex items-center justify-center gap-2"
-            onClick={() => router.push('/create')}
-          >
-            <DollarSign className="h-5 w-5" />
-            Draft Contract
+            Options Book
           </Button>
           <Button
             variant="outline"
@@ -332,10 +322,18 @@ export default function HomePage() {
           <Button
             variant="outline"
             className="h-16 flex items-center justify-center gap-2"
-            onClick={() => router.push('/my-options')}
+            onClick={() => router.push('/genie')}
           >
             <User className="h-5 w-5" />
-            My Options
+            Genie Book
+          </Button>
+          <Button
+            variant="outline"
+            className="h-16 flex items-center justify-center gap-2"
+            onClick={() => router.push('/create')}
+          >
+            <DollarSign className="h-5 w-5" />
+            Draft Contract
           </Button>
         </div>
       </main>
