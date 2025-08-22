@@ -538,7 +538,7 @@ export default function OptionsMarketPage() {
               }
 
               return (
-                <Card key={index} className="hover:shadow-lg transition-shadow neon-outline">
+                <Card key={index} className="neon-outline transition-all duration-300">
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-lg">
@@ -649,10 +649,11 @@ export default function OptionsMarketPage() {
                       <Button
                         variant="outline"
                         size="sm"
+                        className="view-details-button"
                         onClick={() => router.push(`/option/${option.address}`)}
                       >
-                        <Eye className="h-4 w-4 mr-1" />
-                        View Details
+                        <Eye className="h-4 w-4 mr-1 view-details-icon" />
+                        <span className="view-details-text">View Details</span>
                       </Button>
                     </div>
                   </CardContent>

@@ -137,9 +137,9 @@
 
 .neon-outline:hover {
   box-shadow: 
-    inset 0 0 0 2px hsl(var(--ring)),
-    0 0 15px hsl(var(--ring) / 0.4), 
-    0 0 30px hsl(var(--ring) / 0.2);
+    inset 0 0 0 2px #ff1493,
+    0 0 15px rgba(255, 20, 147, 0.4), 
+    0 0 30px rgba(255, 20, 147, 0.2);
 }
 
 .neon-button {
@@ -188,4 +188,43 @@
 .animate-gradient-strong {
   background-size: 250% 250%;
   animation: gradient-shift-strong 3.1s ease-in-out infinite;
+}
+
+.view-details-button {
+  transition: all 0.3s ease-in-out;
+}
+
+.view-details-text {
+  transition: all 0.3s ease-in-out;
+}
+
+.view-details-button:hover .view-details-text {
+  background: linear-gradient(to right, var(--primary), var(--accent), var(--primary));
+  background-size: 250% 250%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: gradient-shift-strong 3.1s ease-in-out infinite;
+}
+
+.view-details-icon {
+  transition: color 0.3s ease-in-out;
+}
+
+.view-details-button:hover .view-details-icon {
+  filter: hue-rotate(0deg);
+  color: var(--primary);
+  animation: icon-hue-shift 3.1s ease-in-out infinite;
+}
+
+@keyframes icon-hue-shift {
+  0% { 
+    color: var(--primary);
+  }
+  50% { 
+    color: var(--accent);
+  }
+  100% { 
+    color: var(--primary);
+  }
 }

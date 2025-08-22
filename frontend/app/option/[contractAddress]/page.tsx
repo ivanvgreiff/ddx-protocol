@@ -11,6 +11,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ArrowLeft, DollarSign, TrendingUp, AlertTriangle, Clock, Shield, Zap, BarChart3, Activity, Users, Target } from 'lucide-react'
+import OptionPayoffChart from '@/components/OptionPayoffChart'
 
 // Real wallet context hook
 const useWallet = () => {
@@ -992,6 +993,29 @@ export default function OptionDetailPage() {
                 </div>
               )}
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Payoff Graph */}
+        <Card className="mb-8 neon-outline">
+          <CardHeader>
+            <CardTitle className="flex items-center">
+              <Activity className="h-5 w-5 mr-2 text-accent" />
+              Payoff Graph
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <OptionPayoffChart
+              optionType={optionData.optionType === 'CALL' ? 'CALL' : 'PUT'}
+              payoffType={(optionData.payoffType as 'Linear' | 'Quadratic' | 'Logarithmic') || 'Linear'}
+              strikePrice={optionData.strikePrice}
+              optionSize={optionData.optionSize}
+              strikeSymbol={optionData.strikeSymbol || 'MTK'}
+              underlyingSymbol={optionData.underlyingSymbol || '2TK'}
+              currentSpotPrice={livePrices.underlying?.price1e18}
+              decimals={18}
+              rangeFraction={1.0}
+            />
           </CardContent>
         </Card>
 
