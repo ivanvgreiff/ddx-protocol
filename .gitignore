@@ -14,6 +14,8 @@ backend/contracts.db-*
 
 # Build outputs
 frontend/build/
+/frontend-green
+/frontend-old
 out/
 cache/
 broadcast/

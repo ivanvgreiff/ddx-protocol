@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-export async function POST(request: NextRequest, { params }: { params: Promise<{ contractAddress: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ contractAddress: string }> }) {
   try {
     const { contractAddress } = await params
     
     // Proxy to your actual backend
     const backendUrl = process.env.BACKEND_URL || 'http://localhost:3001'
-    const response = await fetch(`${backendUrl}/api/option/${contractAddress}/reclaim`, {
-      method: 'POST',
+    const response = await fetch(`${backendUrl}/api/option/${contractAddress}`, {
+      method: 'GET',
       headers: {
         'Content-Type': 'application/json',
       },
@@ -20,10 +20,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const data = await response.json()
     return NextResponse.json(data)
   } catch (error) {
-    console.error('Error proxying reclaim option:', error)
+    console.error('Error fetching option details:', error)
     return NextResponse.json(
-      { success: false, error: 'Failed to prepare reclaim transaction' },
-      { status: 500 }
+      { success: false, error: 'Failed to fetch option details' },
+      { status: 404 }
     )
   }
 }

@@ -538,7 +538,7 @@ export default function OptionsMarketPage() {
               }
 
               return (
-                <Card key={index} className="hover:shadow-lg transition-shadow hover:translate-y-[-5px] transition-transform duration-300">
+                <Card key={index} className="hover:shadow-lg transition-shadow neon-outline">
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-lg">

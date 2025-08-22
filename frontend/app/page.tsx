@@ -186,8 +186,10 @@ export default function HomePage() {
         <Header />
         <main className="container mx-auto px-4 py-20">
           <div className="text-center mb-16">
-            <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-6xl mb-4">
-              Welcome to DDX Protocol
+            <h1 className="text-4xl font-bold tracking-tight sm:text-6xl mb-4">
+              <span className="bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent animate-gradient">
+                DDX Protocol
+              </span>
             </h1>
             <p className="text-lg leading-8 text-muted-foreground max-w-2xl mx-auto">
               Trade options with ease on the decentralized exchange
@@ -317,15 +319,7 @@ export default function HomePage() {
             onClick={() => router.push('/my-options')}
           >
             <Clock className="h-5 w-5" />
-            Futures Book
-          </Button>
-          <Button
-            variant="outline"
-            className="h-16 flex items-center justify-center gap-2"
-            onClick={() => router.push('/genie')}
-          >
-            <User className="h-5 w-5" />
-            Genie Book
+            My Options
           </Button>
           <Button
             variant="outline"

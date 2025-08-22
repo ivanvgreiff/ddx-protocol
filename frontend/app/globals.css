@@ -60,9 +60,9 @@
   --destructive-foreground: oklch(0.95 0.01 106.423);
   --border: oklch(0.15 0.025 258.338);
   --input: oklch(0.12 0.02 258.338);
-  --ring: oklch(0.7 0.22 320.5);
-  --chart-1: oklch(0.7 0.22 320.5);
-  --chart-2: oklch(0.75 0.18 285.75);
+  --ring: oklch(0.65 0.25 320.5);
+  --chart-1: oklch(0.65 0.25 320.5);
+  --chart-2: oklch(0.7 0.22 285.75);
   --chart-3: oklch(0.65 0.25 340.2);
   --chart-4: oklch(0.6 0.28 310.8);
   --chart-5: oklch(0.8 0.15 295.4);
@@ -122,6 +122,38 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+.code-font {
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Source Code Pro', 'Consolas', 'Courier New', monospace;
+  font-variant-ligatures: none;
+  letter-spacing: 0.025em;
+}
+
+.neon-outline {
+  box-shadow: inset 0 0 0 2px transparent;
+  transition: box-shadow 0.3s ease-in-out;
+}
+
+.neon-outline:hover {
+  box-shadow: 
+    inset 0 0 0 2px hsl(var(--ring)),
+    0 0 15px hsl(var(--ring) / 0.4), 
+    0 0 30px hsl(var(--ring) / 0.2);
+}
+
+.neon-button {
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--foreground));
+  transition: all 0.3s ease-in-out;
+}
+
+.neon-button:hover {
+  border-color: hsl(var(--ring));
+  background: hsl(var(--ring) / 0.1);
+  box-shadow: 0 0 10px hsl(var(--ring) / 0.3), 0 0 20px hsl(var(--ring) / 0.2);
+  color: hsl(var(--foreground));
 }
 
 @keyframes gradient-shift {

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-export async function POST(request: NextRequest, { params }: { params: { contractAddress: string } }) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ contractAddress: string }> }) {
   try {
-    const { contractAddress } = params
+    const { contractAddress } = await params
     const body = await request.json()
     
     // Proxy to your actual backend

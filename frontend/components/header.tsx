@@ -1,11 +1,59 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Menu, X, Wallet } from "lucide-react"
 
 export function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [account, setAccount] = useState<string | null>(null)
+  const [isConnecting, setIsConnecting] = useState(false)
+
+  useEffect(() => {
+    // Check if already connected
+    const checkConnection = async () => {
+      if (typeof window !== 'undefined' && (window as any).ethereum) {
+        try {
+          const accounts = await (window as any).ethereum.request({
+            method: 'eth_accounts'
+          })
+          if (accounts.length > 0) {
+            setAccount(accounts[0])
+          }
+        } catch (error) {
+          console.error('Failed to check existing connection:', error)
+        }
+      }
+    }
+    checkConnection()
+  }, [])
+
+  const connectWallet = async () => {
+    setIsConnecting(true)
+    try {
+      if (typeof window !== 'undefined' && (window as any).ethereum) {
+        const accounts = await (window as any).ethereum.request({
+          method: 'eth_requestAccounts'
+        })
+        setAccount(accounts[0])
+      } else {
+        alert('MetaMask is not installed. Please install MetaMask to continue.')
+      }
+    } catch (error) {
+      console.error('Failed to connect wallet:', error)
+      alert('Failed to connect wallet. Please try again.')
+    } finally {
+      setIsConnecting(false)
+    }
+  }
+
+  const disconnectWallet = () => {
+    setAccount(null)
+  }
+
+  const formatAddress = (address: string) => {
+    return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`
+  }
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -14,7 +62,7 @@ export function Header() {
           <div className="flex items-center">
             <div className="flex-shrink-0">
               <a href="/">
-                <h1 className="text-2xl font-bold bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent animate-gradient-strong hover:opacity-80 transition-opacity cursor-pointer">
+                <h1 className="text-4xl font-bold bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent animate-gradient-strong hover:opacity-80 transition-opacity cursor-pointer">
                   DDX
                 </h1>
               </a>
@@ -24,10 +72,7 @@ export function Header() {
                 Options Book
               </a>
               <a href="/my-options" className="text-foreground hover:text-primary transition-colors">
-                Futures Book
-              </a>
-              <a href="/genie" className="text-foreground hover:text-primary transition-colors">
-                Genie Book
+                My Options
               </a>
               <a href="/create" className="text-foreground hover:text-primary transition-colors">
                 Draft Contract
@@ -36,10 +81,25 @@ export function Header() {
           </div>
 
           <div className="hidden md:flex md:items-center md:space-x-4">
-            <Button variant="outline" size="sm">
-              <Wallet className="mr-2 h-4 w-4" />
-              Connect Wallet
-            </Button>
+            {account ? (
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" className="neon-button" onClick={disconnectWallet}>
+                  <Wallet className="mr-2 h-4 w-4" />
+                  {formatAddress(account)}
+                </Button>
+              </div>
+            ) : (
+              <Button 
+                variant="outline" 
+                size="sm"
+                className="neon-button"
+                onClick={connectWallet}
+                disabled={isConnecting}
+              >
+                <Wallet className="mr-2 h-4 w-4" />
+                {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+              </Button>
+            )}
           </div>
 
           <div className="md:hidden">
@@ -56,19 +116,34 @@ export function Header() {
                 Options Book
               </a>
               <a href="/my-options" className="block px-3 py-2 text-foreground hover:text-primary">
-                Futures Book
-              </a>
-              <a href="/genie" className="block px-3 py-2 text-foreground hover:text-primary">
-                Genie Book
+                My Options
               </a>
               <a href="/create" className="block px-3 py-2 text-foreground hover:text-primary">
                 Draft Contract
               </a>
               <div className="px-3 py-2">
-                <Button variant="outline" size="sm" className="w-full bg-transparent">
-                  <Wallet className="mr-2 h-4 w-4" />
-                  Connect Wallet
-                </Button>
+                {account ? (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="w-full bg-transparent neon-button"
+                    onClick={disconnectWallet}
+                  >
+                    <Wallet className="mr-2 h-4 w-4" />
+                    {formatAddress(account)}
+                  </Button>
+                ) : (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="w-full bg-transparent neon-button"
+                    onClick={connectWallet}
+                    disabled={isConnecting}
+                  >
+                    <Wallet className="mr-2 h-4 w-4" />
+                    {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+                  </Button>
+                )}
               </div>
             </div>
           </div>
