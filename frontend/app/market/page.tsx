@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { TrendingUp, DollarSign, Eye, AlertTriangle } from 'lucide-react'
+import OptionPayoffChart from "@/components/OptionPayoffChart"
 
 // Real wallet context hook
 const useWallet = () => {
@@ -610,6 +611,22 @@ export default function OptionsMarketPage() {
                           }
                         })()}
                       </div>
+                    </div>
+
+                    {/* Option Payoff Chart */}
+                    <div className="mt-4 mb-2 flex justify-center">
+                      <OptionPayoffChart
+                        optionType={option.type === 'call' ? 'CALL' : 'PUT'}
+                        payoffType={(option.payoffType as 'Linear' | 'Quadratic' | 'Logarithmic') || 'Linear'}
+                        strikePrice={option.strikePrice}
+                        optionSize={option.optionSize}
+                        strikeSymbol={option.strikeSymbol || 'MTK'}
+                        underlyingSymbol={option.underlyingSymbol || '2TK'}
+                        currentSpotPrice={option.currentPrice}
+                        decimals={18}
+                        compact={true}
+                        className="h-48"
+                      />
                     </div>
 
                     <div className="flex gap-2 pt-4">

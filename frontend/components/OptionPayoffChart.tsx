@@ -43,6 +43,8 @@ export type OptionPayoffChartProps = {
   resolution?: number;
   /** Optional className for outer wrapper */
   className?: string;
+  /** Use compact margins for smaller charts */
+  compact?: boolean;
 };
 
 const NEON_GREEN = "#39FF14"; // neon green payoff line
@@ -82,24 +84,29 @@ function payoff(
       return d2 * d2;
     case "Logarithmic":
       if (optionType === "CALL") {
-        // Logarithmic Call: P = S * log(I(x-K)) if x >= K + 1/I, else 0
-        // But since we want normalized per unit, we show log(I(x-K)) per unit
-        // Using intensity I = 10 for better visualization (makes threshold K + 0.1)
+        // Logarithmic Call Beta Variant: P = S * log(I(x-K + 1/I)) if x >= K, else 0
+        // Normalized per unit: log(I(x-K + 1/I))
         const I = 10;
-        const threshold = K + 1/I; // K + 0.1 when I = 10
-        console.log(`Log Call Debug: spotPrice=${spotPrice}, K=${K}, I=${I}, threshold=${threshold}, condition=${spotPrice >= threshold}`);
-        if (spotPrice >= threshold) {
-          const argument = I * (spotPrice - K);
+        console.log(`Log Call Beta Debug: spotPrice=${spotPrice}, K=${K}, I=${I}, condition=${spotPrice >= K}`);
+        if (spotPrice >= K) {
+          const argument = I * (spotPrice - K + 1/I);
           const logValue = Math.log(argument);
-          console.log(`Log Call: log(${I} * (${spotPrice} - ${K})) = log(${argument}) = ${logValue}`);
-          return logValue; // This is log(I(x-K)) per unit
+          console.log(`Log Call Beta: log(${I} * (${spotPrice} - ${K} + ${1/I})) = log(${argument}) = ${logValue}`);
+          return logValue;
         }
         return 0;
       } else {
-        // Logarithmic Put: keep existing logic for now
-        const d = Math.max(0, K - spotPrice);
-        if (d <= 0) return 0;
-        return Math.log(K / spotPrice);
+        // Logarithmic Put Beta Variant: P = S * log(I(K-x + 1/I)) if x <= K, else 0
+        // Normalized per unit: log(I(K-x + 1/I))
+        const I = 10;
+        console.log(`Log Put Beta Debug: spotPrice=${spotPrice}, K=${K}, I=${I}, condition=${spotPrice <= K}`);
+        if (spotPrice <= K) {
+          const argument = I * (K - spotPrice + 1/I);
+          const logValue = Math.log(argument);
+          console.log(`Log Put Beta: log(${I} * (${K} - ${spotPrice} + ${1/I})) = log(${argument}) = ${logValue}`);
+          return logValue;
+        }
+        return 0;
       }
     default:
       const dDefault = optionType === "CALL" ? Math.max(0, spotPrice - K) : Math.max(0, K - spotPrice);
@@ -130,6 +137,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
     rangeFraction = 1.0,
     resolution = 120,
     className,
+    compact = false,
   } = props;
 
   const K = fromUnits(strikePrice, decimals) ?? 0;
@@ -158,15 +166,15 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
     for (let i = 0; i < pts; i++) {
       const t = i / (pts - 1);
       const S = minX + t * span;
-      const value = payoff(payoffType, optionType, S, K); // Removed * size to normalize
+      const value = payoff(payoffType, optionType, S, K) * size; // Total payoff (not normalized)
       out.push({ 
         spot: S, 
         payoff: value,
-        diagonal: S >= K ? S - K : undefined // y=x-K line data, only from strike onwards
+        diagonal: optionType === "CALL" ? (S >= K ? (S - K) * size : undefined) : (S <= K ? (K - S) * size : undefined) // Diagonal line for calls (y=x-K) or puts (y=K-x), weighted by size
       });
     }
     return out;
-  }, [minX, maxX, payoffType, optionType, K, resolution]); // Removed size from dependencies
+  }, [minX, maxX, payoffType, optionType, K, resolution, size]); // Added size back to dependencies
 
   const yMax = useMemo(() => {
     // Determine a reasonable Y max for nice padding
@@ -177,17 +185,18 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
   }, [data]);
 
   const axisLabelX = `Spot Price${underlyingSymbol ? ` (${underlyingSymbol})` : ""}`;
-  const axisLabelY = `Payoff per Unit${strikeSymbol ? ` (${strikeSymbol})` : ""}`;
+  const axisLabelY = `Total Payoff${strikeSymbol ? ` (${strikeSymbol})` : ""}`;
 
   return (
     <div
       className={
-        "w-full h-72 md:h-96 transition-all duration-300 rounded-lg bg-transparent " +
-        (className ?? "")
+        className?.includes('h-') 
+          ? `w-full transition-all duration-300 rounded-lg bg-transparent ${className}`
+          : `w-full h-72 md:h-96 transition-all duration-300 rounded-lg bg-transparent ${className ?? ""}`
       }
     >
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 32, right: 16, left: 48, bottom: 32 }}>
+        <LineChart data={data} margin={compact ? { top: 20, right: 4, left: 4, bottom: 24 } : { top: 32, right: 16, left: 48, bottom: 32 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
           <XAxis
             dataKey="spot"
@@ -201,12 +210,13 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
           />
           <YAxis
             domain={[0, yMax]}
-            tick={{ fill: AXIS_COLOR, fontSize: 12 }}
-            axisLine={{ stroke: GRID_COLOR }}
-            tickLine={{ stroke: GRID_COLOR }}
-            tickFormatter={(v) => formatNumber(v)}
+            tick={compact ? false : { fill: AXIS_COLOR, fontSize: 12 }}
+            axisLine={compact ? false : { stroke: GRID_COLOR }}
+            tickLine={compact ? false : { stroke: GRID_COLOR }}
+            tickFormatter={compact ? () => '' : (v) => formatNumber(v)}
             tickCount={6}
-            label={{ 
+            width={compact ? 0 : undefined}
+            label={compact ? undefined : { 
               value: axisLabelY, 
               angle: -90, 
               position: "insideLeft", 
