@@ -61,11 +61,21 @@ function fromUnits(value: string | undefined, decimals = 18): number | undefined
     const base = 10n ** BigInt(decimals);
     const whole = Number(bi / base);
     const frac = Number(bi % base) / Number(base);
-    return whole + frac;
-  } catch {
+    const result = whole + frac;
+    if (!Number.isFinite(result)) {
+      console.warn('fromUnits produced NaN/Infinity:', { value, decimals, result });
+      return undefined;
+    }
+    return result;
+  } catch (error) {
     // Fallback for plain decimal strings
+    console.warn('fromUnits BigInt failed, trying Number:', { value, error });
     const num = Number(value);
-    return Number.isFinite(num) ? num : undefined;
+    if (!Number.isFinite(num)) {
+      console.warn('fromUnits Number conversion failed:', { value, num });
+      return undefined;
+    }
+    return num;
   }
 }
 
@@ -160,6 +170,11 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
   }, [K, rangeFraction, S_curr]);
 
   const data = useMemo(() => {
+    // Guard against NaN values
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(K) || !Number.isFinite(size)) {
+      return [];
+    }
+    
     const pts = Math.max(16, Math.min(500, Math.floor(resolution)));
     const out: { spot: number; payoff: number; diagonal?: number }[] = [];
     const span = maxX - minX || 1;
@@ -167,11 +182,15 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
       const t = i / (pts - 1);
       const S = minX + t * span;
       const value = payoff(payoffType, optionType, S, K) * size; // Total payoff (not normalized)
-      out.push({ 
-        spot: S, 
-        payoff: value,
-        diagonal: optionType === "CALL" ? (S >= K ? (S - K) * size : undefined) : (S <= K ? (K - S) * size : undefined) // Diagonal line for calls (y=x-K) or puts (y=K-x), weighted by size
-      });
+      
+      // Guard against NaN in calculated values
+      if (Number.isFinite(S) && Number.isFinite(value)) {
+        out.push({ 
+          spot: S, 
+          payoff: value,
+          diagonal: optionType === "CALL" ? (S >= K ? (S - K) * size : undefined) : (S <= K ? (K - S) * size : undefined) // Diagonal line for calls (y=x-K) or puts (y=K-x), weighted by size
+        });
+      }
     }
     return out;
   }, [minX, maxX, payoffType, optionType, K, resolution, size]); // Added size back to dependencies
@@ -187,6 +206,15 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
   const axisLabelX = `Spot Price${underlyingSymbol ? ` (${underlyingSymbol})` : ""}`;
   const axisLabelY = `Total Payoff${strikeSymbol ? ` (${strikeSymbol})` : ""}`;
 
+  // Don't render chart if we have invalid data
+  if (!Number.isFinite(K) || !Number.isFinite(size) || !Number.isFinite(minX) || !Number.isFinite(maxX) || data.length === 0) {
+    return (
+      <div className="w-full h-32 flex items-center justify-center text-muted-foreground">
+        <span>Chart data unavailable</span>
+      </div>
+    );
+  }
+
   return (
     <div
       className={
@@ -201,7 +229,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
           <XAxis
             dataKey="spot"
             type="number"
-            domain={[minX, maxX]}
+            domain={[Number.isFinite(minX) ? minX : 0, Number.isFinite(maxX) ? maxX : 1]}
             tick={{ fill: AXIS_COLOR, fontSize: 12 }}
             axisLine={{ stroke: GRID_COLOR }}
             tickLine={{ stroke: GRID_COLOR }}
@@ -215,7 +243,6 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
             tickLine={compact ? false : { stroke: GRID_COLOR }}
             tickFormatter={compact ? () => '' : (v) => formatNumber(v)}
             tickCount={6}
-            width={compact ? 0 : undefined}
             label={compact ? undefined : { 
               value: axisLabelY, 
               angle: -90, 
@@ -227,18 +254,20 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
           />
 
           {/* Strike price vertical line (y-axis at strike) - always visible */}
-          <ReferenceLine 
-            x={K} 
-            stroke="#666666" 
-            strokeWidth={1}
-            strokeDasharray="1 1"
-            label={{
-              value: "Strike",
-              position: "top",
-              fill: LABEL_COLOR,
-              fontSize: 12,
-            }} 
-          />
+          {K && Number.isFinite(K) && (
+            <ReferenceLine 
+              x={K} 
+              stroke="#666666" 
+              strokeWidth={1}
+              strokeDasharray="1 1"
+              label={{
+                value: "Strike",
+                position: "top",
+                fill: LABEL_COLOR,
+                fontSize: 12,
+              }} 
+            />
+          )}
 
           {/* Y=X diagonal reference line as actual data */}
           <Line
@@ -252,7 +281,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
           />
 
           {/* Current spot price marker */}
-          {S_curr != null && (
+          {S_curr != null && Number.isFinite(S_curr) && (
             <ReferenceLine
               x={S_curr}
               stroke="hsl(var(--accent))"
