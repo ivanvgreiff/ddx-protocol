@@ -224,7 +224,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
       }
     >
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={compact ? { top: 20, right: 4, left: 4, bottom: 24 } : { top: 32, right: 16, left: 48, bottom: 32 }}>
+        <LineChart data={data} margin={compact ? { top: 20, right: 4, left: -40, bottom: 24 } : { top: 32, right: 16, left: 48, bottom: 32 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
           <XAxis
             dataKey="spot"
