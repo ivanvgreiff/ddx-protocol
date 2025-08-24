@@ -196,7 +196,7 @@ export default function OptionsMarketPage() {
       return data.contracts || []
     },
     {
-      refetchInterval: 120000, // Refetch every 2 minutes instead of 1  
+      // refetchInterval: 120000, // Disable automatic refetching
     }
   )
 

@@ -104,11 +104,11 @@ const useQuery = (key: string, fetchFn: () => Promise<any>, options?: any) => {
       fetchData()
     }
 
-    // Set up interval if specified
-    if (options?.refetchInterval) {
-      const interval = setInterval(fetchData, options.refetchInterval)
-      return () => clearInterval(interval)
-    }
+    // Disable automatic refetching intervals
+    // if (options?.refetchInterval) {
+    //   const interval = setInterval(fetchData, options.refetchInterval)
+    //   return () => clearInterval(interval)
+    // }
   }, [key, options?.enabled, options?.refetchInterval, fetchFn])
 
   return { data, isLoading, error }
@@ -342,8 +342,8 @@ export default function OptionDetailPage() {
     `option-${contractAddress}`,
     fetchOptionData,
     {
-      enabled: !!contractAddress,
-      refetchInterval: false // Disable automatic refetching
+      enabled: !!contractAddress
+      // refetchInterval: false // Disable automatic refetching
     }
   )
 
@@ -392,9 +392,9 @@ export default function OptionDetailPage() {
 
     if (optionData && showExerciseInput) {
       fetchAllLivePrices()
-      // Set up interval to refresh prices every 60 seconds
-      const priceInterval = setInterval(fetchAllLivePrices, 60000)
-      return () => clearInterval(priceInterval)
+      // Disable automatic price refresh intervals
+      // const priceInterval = setInterval(fetchAllLivePrices, 60000)
+      // return () => clearInterval(priceInterval)
     }
   }, [optionData, showExerciseInput])
 
@@ -1015,6 +1015,7 @@ export default function OptionDetailPage() {
               currentSpotPrice={livePrices.underlying?.price1e18}
               decimals={18}
               rangeFraction={1.0}
+              isShortPosition={account && optionData.short && account.toLowerCase() === optionData.short.toLowerCase()}
             />
           </CardContent>
         </Card>
