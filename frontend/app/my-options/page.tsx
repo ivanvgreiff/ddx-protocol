@@ -10,56 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { TrendingUp, DollarSign, Eye, AlertTriangle } from 'lucide-react'
 import OptionPayoffChart from "@/components/OptionPayoffChart"
 
-// Real wallet context hook
-const useWallet = () => {
-  const [account, setAccount] = useState<string | null>(null)
-  const [isConnecting, setIsConnecting] = useState(false)
-
-  useEffect(() => {
-    // Check if already connected
-    const checkConnection = async () => {
-      if (typeof window !== 'undefined' && (window as any).ethereum) {
-        try {
-          const accounts = await (window as any).ethereum.request({
-            method: 'eth_accounts'
-          })
-          if (accounts.length > 0) {
-            setAccount(accounts[0])
-          }
-        } catch (error) {
-          console.error('Failed to check existing connection:', error)
-        }
-      }
-    }
-    checkConnection()
-  }, [])
-
-  const sendTransaction = async (txData: any) => {
-    if (typeof window !== 'undefined' && (window as any).ethereum) {
-      try {
-        const txHash = await (window as any).ethereum.request({
-          method: 'eth_sendTransaction',
-          params: [txData],
-        })
-        
-        // Return a transaction object with wait method
-        return {
-          hash: txHash,
-          wait: async () => {
-            // Simple wait implementation - in production you'd want proper receipt checking
-            return new Promise(resolve => setTimeout(resolve, 2000))
-          }
-        }
-      } catch (error) {
-        console.error('Transaction failed:', error)
-        throw error
-      }
-    }
-    throw new Error('MetaMask not available')
-  }
-
-  return { account, sendTransaction, isConnecting }
-}
+import { useWallet } from "@/components/wallet-context"
 
 // Real data fetching hook
 const useQuery = (key: string, fetchFn: () => Promise<any>, options?: any) => {
@@ -599,9 +550,9 @@ export default function MyOptionsPage() {
                               color: '#000000',
                               borderColor: isShortPosition ? '#FFAD00' : '#39FF14'
                             } : status.class === 'reclaimed' ? {
-                              backgroundColor: '#FFAD00',
+                              backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
                               color: '#000000',
-                              borderColor: '#FFAD00'
+                              borderColor: isShortPosition ? '#FFAD00' : '#39FF14'
                             } : undefined
                           }
                         >

@@ -9,29 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { TrendingUp, DollarSign, Clock, AlertCircle, Search, User, Box, Network } from 'lucide-react'
 
-// Mock wallet context - replace with your actual wallet context
-const useWallet = () => {
-  const [account, setAccount] = useState<string | null>(null)
-  const [isConnecting, setIsConnecting] = useState(false)
-
-  const connectWallet = async () => {
-    setIsConnecting(true)
-    try {
-      if (typeof window !== 'undefined' && (window as any).ethereum) {
-        const accounts = await (window as any).ethereum.request({
-          method: 'eth_requestAccounts'
-        })
-        setAccount(accounts[0])
-      }
-    } catch (error) {
-      console.error('Failed to connect wallet:', error)
-    } finally {
-      setIsConnecting(false)
-    }
-  }
-
-  return { account, connectWallet, isConnecting }
-}
+import { useWallet } from "@/components/wallet-context"
 
 // Mock data fetching - replace with your actual API calls
 const useQuery = (key: string, fetchFn: () => Promise<any>, options?: any) => {

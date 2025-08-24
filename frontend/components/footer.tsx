@@ -9,7 +9,7 @@ export function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="space-y-4">
             <h3 className="text-lg font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-              DerivX
+              DDX
             </h3>
             <p className="text-sm text-muted-foreground">
               The most advanced decentralized derivatives trading platform. Trade with confidence, security, and
@@ -93,7 +93,7 @@ export function Footer() {
         </div>
 
         <div className="border-t border-border mt-8 pt-8 text-center text-sm text-muted-foreground">
-          <p>&copy; 2024 DerivX. All rights reserved. Built on decentralized infrastructure.</p>
+          <p>&copy; 2024 DDX. All rights reserved. Built on decentralized infrastructure.</p>
         </div>
       </div>
     </footer>

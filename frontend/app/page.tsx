@@ -10,51 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { TrendingUp, DollarSign, Clock, AlertCircle, Search, User, Box, Network } from 'lucide-react'
 
-// Real wallet context hook
-const useWallet = () => {
-  const [account, setAccount] = useState<string | null>(null)
-  const [isConnecting, setIsConnecting] = useState(false)
-
-  useEffect(() => {
-    // Check if already connected
-    const checkConnection = async () => {
-      if (typeof window !== 'undefined' && (window as any).ethereum) {
-        try {
-          const accounts = await (window as any).ethereum.request({
-            method: 'eth_accounts'
-          })
-          if (accounts.length > 0) {
-            setAccount(accounts[0])
-          }
-        } catch (error) {
-          console.error('Failed to check existing connection:', error)
-        }
-      }
-    }
-    checkConnection()
-  }, [])
-
-  const connectWallet = async () => {
-    setIsConnecting(true)
-    try {
-      if (typeof window !== 'undefined' && (window as any).ethereum) {
-        const accounts = await (window as any).ethereum.request({
-          method: 'eth_requestAccounts'
-        })
-        setAccount(accounts[0])
-      } else {
-        alert('MetaMask is not installed. Please install MetaMask to continue.')
-      }
-    } catch (error) {
-      console.error('Failed to connect wallet:', error)
-      alert('Failed to connect wallet. Please try again.')
-    } finally {
-      setIsConnecting(false)
-    }
-  }
-
-  return { account, connectWallet, isConnecting }
-}
+import { useWallet } from "@/components/wallet-context"
 
 // Real data fetching hook with proper error handling
 const useQuery = (key: string, fetchFn: () => Promise<any>, options?: any) => {

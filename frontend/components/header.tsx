@@ -1,55 +1,13 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Menu, X, Wallet } from "lucide-react"
+import { useWallet } from "./wallet-context"
 
 export function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
-  const [account, setAccount] = useState<string | null>(null)
-  const [isConnecting, setIsConnecting] = useState(false)
-
-  useEffect(() => {
-    // Check if already connected
-    const checkConnection = async () => {
-      if (typeof window !== 'undefined' && (window as any).ethereum) {
-        try {
-          const accounts = await (window as any).ethereum.request({
-            method: 'eth_accounts'
-          })
-          if (accounts.length > 0) {
-            setAccount(accounts[0])
-          }
-        } catch (error) {
-          console.error('Failed to check existing connection:', error)
-        }
-      }
-    }
-    checkConnection()
-  }, [])
-
-  const connectWallet = async () => {
-    setIsConnecting(true)
-    try {
-      if (typeof window !== 'undefined' && (window as any).ethereum) {
-        const accounts = await (window as any).ethereum.request({
-          method: 'eth_requestAccounts'
-        })
-        setAccount(accounts[0])
-      } else {
-        alert('MetaMask is not installed. Please install MetaMask to continue.')
-      }
-    } catch (error) {
-      console.error('Failed to connect wallet:', error)
-      alert('Failed to connect wallet. Please try again.')
-    } finally {
-      setIsConnecting(false)
-    }
-  }
-
-  const disconnectWallet = () => {
-    setAccount(null)
-  }
+  const { account, isConnecting, connectWallet, disconnectWallet } = useWallet()
 
   const formatAddress = (address: string) => {
     return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`
@@ -83,21 +41,21 @@ export function Header() {
           <div className="hidden md:flex md:items-center md:space-x-4">
             {account ? (
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" className="neon-button" onClick={disconnectWallet}>
-                  <Wallet className="mr-2 h-4 w-4" />
-                  {formatAddress(account)}
+                <Button variant="outline" size="sm" className="wallet-button" onClick={disconnectWallet}>
+                  <Wallet className="mr-2 h-4 w-4 wallet-icon" />
+                  <span className="wallet-text">{formatAddress(account)}</span>
                 </Button>
               </div>
             ) : (
               <Button 
                 variant="outline" 
                 size="sm"
-                className="neon-button"
+                className="wallet-button"
                 onClick={connectWallet}
                 disabled={isConnecting}
               >
-                <Wallet className="mr-2 h-4 w-4" />
-                {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+                <Wallet className="mr-2 h-4 w-4 wallet-icon" />
+                <span className="wallet-text">{isConnecting ? 'Connecting...' : 'Connect Wallet'}</span>
               </Button>
             )}
           </div>
@@ -126,22 +84,22 @@ export function Header() {
                   <Button 
                     variant="outline" 
                     size="sm" 
-                    className="w-full bg-transparent neon-button"
+                    className="w-full bg-transparent wallet-button"
                     onClick={disconnectWallet}
                   >
-                    <Wallet className="mr-2 h-4 w-4" />
-                    {formatAddress(account)}
+                    <Wallet className="mr-2 h-4 w-4 wallet-icon" />
+                    <span className="wallet-text">{formatAddress(account)}</span>
                   </Button>
                 ) : (
                   <Button 
                     variant="outline" 
                     size="sm" 
-                    className="w-full bg-transparent neon-button"
+                    className="w-full bg-transparent wallet-button"
                     onClick={connectWallet}
                     disabled={isConnecting}
                   >
-                    <Wallet className="mr-2 h-4 w-4" />
-                    {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+                    <Wallet className="mr-2 h-4 w-4 wallet-icon" />
+                    <span className="wallet-text">{isConnecting ? 'Connecting...' : 'Connect Wallet'}</span>
                   </Button>
                 )}
               </div>

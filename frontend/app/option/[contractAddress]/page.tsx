@@ -14,68 +14,7 @@ import { ArrowLeft, DollarSign, TrendingUp, AlertTriangle, Clock, Shield, Zap, B
 import OptionPayoffChart from '@/components/OptionPayoffChart'
 
 // Real wallet context hook
-const useWallet = () => {
-  const [account, setAccount] = useState<string | null>(null)
-
-  useEffect(() => {
-    // Check if already connected
-    const checkConnection = async () => {
-      if (typeof window !== 'undefined' && (window as any).ethereum) {
-        try {
-          const accounts = await (window as any).ethereum.request({
-            method: 'eth_accounts'
-          })
-          if (accounts.length > 0) {
-            setAccount(accounts[0])
-          }
-        } catch (error) {
-          console.error('Failed to check existing connection:', error)
-        }
-      }
-    }
-    checkConnection()
-  }, [])
-
-  const sendTransaction = async (txData: any) => {
-    if (typeof window !== 'undefined' && (window as any).ethereum) {
-      try {
-        const txHash = await (window as any).ethereum.request({
-          method: 'eth_sendTransaction',
-          params: [txData],
-        })
-        
-        // Return a transaction object with wait method
-        return {
-          hash: txHash,
-          wait: async () => {
-            // Proper receipt waiting implementation
-            let receipt = null
-            while (!receipt) {
-              try {
-                receipt = await (window as any).ethereum.request({
-                  method: 'eth_getTransactionReceipt',
-                  params: [txHash]
-                })
-                if (!receipt) {
-                  await new Promise(resolve => setTimeout(resolve, 1000))
-                }
-              } catch (error) {
-                await new Promise(resolve => setTimeout(resolve, 1000))
-              }
-            }
-            return receipt
-          }
-        }
-      } catch (error) {
-        console.error('Transaction failed:', error)
-        throw error
-      }
-    }
-    throw new Error('MetaMask not available')
-  }
-
-  return { account, sendTransaction }
-}
+import { useWallet } from "@/components/wallet-context"
 
 // Real data fetching hook
 const useQuery = (key: string, fetchFn: () => Promise<any>, options?: any) => {
