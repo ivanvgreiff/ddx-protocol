@@ -45,9 +45,12 @@ export type OptionPayoffChartProps = {
   className?: string;
   /** Use compact margins for smaller charts */
   compact?: boolean;
+  /** Show short position perspective with inverted payoff and different styling */
+  isShortPosition?: boolean;
 };
 
-const NEON_GREEN = "#39FF14"; // neon green payoff line
+const NEON_GREEN = "#39FF14"; // neon green payoff line for long positions
+const NEON_ORANGE = "#FFAD00"; // FFAD00
 const GRID_COLOR = "hsl(var(--border) / 0.25)"; // subtle grid per design system
 // Use theme-aware colors that work in both light and dark modes
 const AXIS_COLOR = "rgb(229 231 235)"; // gray-200 for light backgrounds, visible on dark
@@ -148,6 +151,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
     resolution = 120,
     className,
     compact = false,
+    isShortPosition = false,
   } = props;
 
   const K = fromUnits(strikePrice, decimals) ?? 0;
@@ -181,27 +185,51 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
     for (let i = 0; i < pts; i++) {
       const t = i / (pts - 1);
       const S = minX + t * span;
-      const value = payoff(payoffType, optionType, S, K) * size; // Total payoff (not normalized)
+      let value = payoff(payoffType, optionType, S, K) * size; // Total payoff (not normalized)
+      
+      // For short positions, invert the payoff to show the seller's perspective
+      if (isShortPosition) {
+        value = -value;
+      }
       
       // Guard against NaN in calculated values
       if (Number.isFinite(S) && Number.isFinite(value)) {
+        let diagonalValue = optionType === "CALL" ? (S >= K ? (S - K) * size : undefined) : (S <= K ? (K - S) * size : undefined);
+        // Also invert diagonal for short positions
+        if (isShortPosition && diagonalValue !== undefined) {
+          diagonalValue = -diagonalValue;
+        }
+        
         out.push({ 
           spot: S, 
           payoff: value,
-          diagonal: optionType === "CALL" ? (S >= K ? (S - K) * size : undefined) : (S <= K ? (K - S) * size : undefined) // Diagonal line for calls (y=x-K) or puts (y=K-x), weighted by size
+          diagonal: diagonalValue
         });
       }
     }
     return out;
-  }, [minX, maxX, payoffType, optionType, K, resolution, size]); // Added size back to dependencies
+  }, [minX, maxX, payoffType, optionType, K, resolution, size, isShortPosition]); // Added isShortPosition to dependencies
 
-  const yMax = useMemo(() => {
-    // Determine a reasonable Y max for nice padding
+  const [yMin, yMax] = useMemo(() => {
+    // Determine reasonable Y bounds for nice padding, handling negative values for short positions
+    let min = 0;
     let max = 0;
-    for (const d of data) max = Math.max(max, d.payoff);
-    if (!Number.isFinite(max) || max <= 0) return 1; // avoid zero height
-    return max * 1.1;
-  }, [data]);
+    for (const d of data) {
+      min = Math.min(min, d.payoff);
+      max = Math.max(max, d.payoff);
+    }
+    
+    if (isShortPosition) {
+      // For short positions, we want to show negative values, so extend the range appropriately
+      if (!Number.isFinite(min) || min >= 0) min = -1; // ensure we have negative space
+      if (!Number.isFinite(max) || max <= 0) max = 0.1; // small positive space for labels
+      return [min * 1.1, max * 1.1];
+    } else {
+      // For long positions, keep the original behavior
+      if (!Number.isFinite(max) || max <= 0) max = 1; // avoid zero height
+      return [0, max * 1.1];
+    }
+  }, [data, isShortPosition]);
 
   const axisLabelX = `Spot Price${underlyingSymbol ? ` (${underlyingSymbol})` : ""}`;
   const axisLabelY = `Total Payoff${strikeSymbol ? ` (${strikeSymbol})` : ""}`;
@@ -234,10 +262,15 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
             axisLine={{ stroke: GRID_COLOR }}
             tickLine={{ stroke: GRID_COLOR }}
             tickFormatter={(v) => formatNumber(v)}
-            label={{ value: axisLabelX, position: "insideBottom", offset: -10, fill: LABEL_COLOR }}
+            label={{ 
+              value: axisLabelX, 
+              position: isShortPosition ? "insideBottom" : "insideBottom", 
+              offset: -15, 
+              fill: LABEL_COLOR 
+            }}
           />
           <YAxis
-            domain={[0, yMax]}
+            domain={[yMin, yMax]}
             tick={compact ? false : { fill: AXIS_COLOR, fontSize: 12 }}
             axisLine={compact ? false : { stroke: GRID_COLOR }}
             tickLine={compact ? false : { stroke: GRID_COLOR }}
@@ -262,7 +295,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
               strokeDasharray="1 1"
               label={{
                 value: "Strike",
-                position: "top",
+                position: isShortPosition ? "top" : "top",
                 fill: LABEL_COLOR,
                 fontSize: 12,
               }} 
@@ -316,7 +349,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
             dataKey="payoff"
             dot={false}
             strokeWidth={2.5}
-            stroke={NEON_GREEN}
+            stroke={isShortPosition ? NEON_ORANGE : NEON_GREEN}
             className="transition-all duration-300"
             isAnimationActive
           />

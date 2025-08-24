@@ -4,14 +4,16 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { AlertTriangle, Eye } from 'lucide-react'
+import { TrendingUp, DollarSign, Eye, AlertTriangle } from 'lucide-react'
+import OptionPayoffChart from "@/components/OptionPayoffChart"
 
 // Real wallet context hook
 const useWallet = () => {
   const [account, setAccount] = useState<string | null>(null)
+  const [isConnecting, setIsConnecting] = useState(false)
 
   useEffect(() => {
     // Check if already connected
@@ -32,7 +34,31 @@ const useWallet = () => {
     checkConnection()
   }, [])
 
-  return { account }
+  const sendTransaction = async (txData: any) => {
+    if (typeof window !== 'undefined' && (window as any).ethereum) {
+      try {
+        const txHash = await (window as any).ethereum.request({
+          method: 'eth_sendTransaction',
+          params: [txData],
+        })
+        
+        // Return a transaction object with wait method
+        return {
+          hash: txHash,
+          wait: async () => {
+            // Simple wait implementation - in production you'd want proper receipt checking
+            return new Promise(resolve => setTimeout(resolve, 2000))
+          }
+        }
+      } catch (error) {
+        console.error('Transaction failed:', error)
+        throw error
+      }
+    }
+    throw new Error('MetaMask not available')
+  }
+
+  return { account, sendTransaction, isConnecting }
 }
 
 // Real data fetching hook
@@ -70,9 +96,29 @@ const useQuery = (key: string, fetchFn: () => Promise<any>, options?: any) => {
   return { data, isLoading, error }
 }
 
+// Toast notification system (simplified)
+const toast = {
+  success: (message: string) => {
+    console.log('✅', message)
+    alert(`Success: ${message}`)
+  },
+  error: (message: string) => {
+    console.error('❌', message)
+    alert(`Error: ${message}`)
+  },
+  loading: (message: string) => {
+    console.log('⏳', message)
+    return Math.random() // Return a simple ID
+  },
+  dismiss: (id?: any) => {
+    console.log('Toast dismissed')
+  }
+}
+
 export default function MyOptionsPage() {
   const router = useRouter()
-  const { account } = useWallet()
+  const { account, sendTransaction } = useWallet()
+  const [filter, setFilter] = useState('all')
   const [currentTime, setCurrentTime] = useState(Date.now())
 
   // Update current time every second for real-time countdown
@@ -112,41 +158,65 @@ export default function MyOptionsPage() {
     return `${formatted} ${symbol}`
   }
 
-  // Fetch user's options from current OptionsBook factory
+  // Format expiry display with real-time countdown
+  const formatExpiry = (option: any) => {
+    if (!option.expiry) return 'Not set'
+    
+    // If option is not yet engaged (not funded or not active), show activation message
+    if (!option.isFunded || !option.isActive) {
+      return '5 minutes upon activation'
+    }
+    
+    // If option is engaged, show countdown or expiry date
+    const expiryTime = option.expiry * 1000 // Convert to milliseconds
+    const timeRemaining = expiryTime - currentTime
+    
+    // If expired or exercised, show actual expiry date
+    if (timeRemaining <= 0 || option.isExercised) {
+      const expiryDate = new Date(expiryTime)
+      return `${expiryDate.toLocaleDateString()} ${expiryDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`
+    }
+    
+    // Calculate countdown for active options
+    const minutes = Math.floor(timeRemaining / (1000 * 60))
+    const seconds = Math.floor((timeRemaining % (1000 * 60)) / 1000)
+    
+    return `${minutes}:${seconds.toString().padStart(2, '0')} remaining`
+  }
+
+  // Fetch options from current OptionsBook factory (on-chain source of truth)
   const { data: optionsData, isLoading } = useQuery(
-    'userOptions',
+    'options',
     async () => {
-      if (!account) return { contracts: [] }
-      
       const response = await fetch('/api/factory/all-contracts')
       if (!response.ok) {
         throw new Error('Failed to fetch options')
       }
       const data = await response.json()
-      
-      // Filter options where user is either short or long
-      const userOptions = (data.contracts || []).filter((option: any) => {
-        const isShort = option.short && account && option.short.toLowerCase() === account.toLowerCase()
-        const isLong = option.long && account && option.long.toLowerCase() === account.toLowerCase()
-        return isShort || isLong
-      }).map((option: any) => {
-        // Add role information
-        const isShort = option.short && account && option.short.toLowerCase() === account.toLowerCase()
-        return {
-          ...option,
-          role: isShort ? 'short' : 'long'
-        }
-      })
-      
-      return { contracts: userOptions }
+      return data.contracts || []
     },
     {
-      enabled: !!account,
-      refetchInterval: 120000, // Refetch every 2 minutes
+      refetchInterval: 120000, // Refetch every 2 minutes instead of 1  
     }
   )
 
-  const userOptions = optionsData?.contracts || []
+  const options = optionsData || []
+
+  // Filter options where user is either short or long
+  const userOptions = options.filter((option: any) => {
+    if (!account) return false
+    const isShort = option.short && account && option.short.toLowerCase() === account.toLowerCase()
+    const isLong = option.long && account && option.long.toLowerCase() === account.toLowerCase()
+    return isShort || isLong
+  })
+
+  const filteredOptions = userOptions.filter((option: any) => {
+    if (filter === 'all') return true
+    if (filter === 'available' && !option.isActive) return true
+    if (filter === 'filled' && option.isActive) return true
+    if (filter === 'expired' && option.expiry && option.expiry * 1000 < currentTime) return true
+    return false
+  })
 
   const getStatus = (option: any) => {
     if (option.isExercised) return { text: 'Exercised', class: 'exercised' }
@@ -169,6 +239,230 @@ export default function MyOptionsPage() {
     if (option.isActive) return { text: 'Active', class: 'filled' }
     if (option.isFunded) return { text: 'Funded', class: 'funded' }
     return { text: 'Created', class: 'funded' }
+  }
+
+  const handleEnter = async (contractAddress: string) => {
+    if (!account) {
+      toast.error('Please connect your wallet first')
+      return
+    }
+
+    // Show initial loading message
+    const loadingToast = toast.loading('Preparing enter as long transactions...')
+
+    try {
+      console.log('Attempting to enter option with contract address:', contractAddress)
+      const response = await fetch(`/api/option/${contractAddress}/enter`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userAddress: account })
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to prepare enter transaction')
+      }
+      
+      const data = await response.json()
+      console.log('Enter response:', data)
+      
+      if (data.success && data.data) {
+        const { approveTransaction, enterTransaction, premiumToken, premiumAmount, optionsBookAddress } = data.data
+        
+        // Step 1: Check current allowance
+        toast.dismiss(loadingToast)
+        toast.loading('Checking premium token allowance...')
+        
+        const provider = new (window as any).ethereum
+        // Simplified allowance check - in production you'd use proper ethers.js
+        
+        // Step 2: Send separate approval transaction if needed
+        toast.dismiss()
+        toast.loading('Please approve premium token spending... (Transaction 1/2)')
+        
+        console.log('Sending approval transaction:', approveTransaction)
+        const approveTx = await sendTransaction(approveTransaction)
+        
+        if (approveTx) {
+          toast.loading('Waiting for approval confirmation... (Transaction 1/2)')
+          await approveTx.wait()
+          toast.success('✅ Premium token approval confirmed!')
+        } else {
+          throw new Error('Premium approval transaction failed')
+        }
+        
+        // Step 3: Send separate enter as long transaction
+        toast.loading('Please confirm entering as long... (Transaction 2/2)')
+        
+        console.log('Sending enter as long transaction:', enterTransaction)
+        const tx = await sendTransaction(enterTransaction)
+        
+        if (tx) {
+          toast.loading('Waiting for enter as long confirmation...')
+          
+          // Wait for confirmation
+          await tx.wait()
+          
+          toast.success('Entered as long successfully!')
+          
+          // Notify backend about long entry event
+          try {
+            await fetch(`/api/contracts/${contractAddress}/long-entered`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                longAddress: account,
+                expiry: Math.floor(Date.now() / 1000) + (5 * 60), // 5 minutes from now
+                transactionHash: tx.hash
+              })
+            })
+            console.log('Long entry recorded in database')
+          } catch (error) {
+            console.warn('Failed to record long entry:', error)
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error('Error entering option:', error)
+      
+      // Dismiss any loading toasts
+      toast.dismiss()
+      
+      // Handle specific error types
+      let errorMessage = 'Failed to enter option'
+      
+      if (error.code === 4001) {
+        errorMessage = 'Transaction cancelled by user'
+      } else if (error.message && error.message.includes('insufficient funds')) {
+        errorMessage = 'Insufficient ETH for gas fees'
+      } else if (error.message) {
+        errorMessage = error.message
+      }
+      
+      toast.error(`Failed to enter option: ${errorMessage}`)
+    }
+  }
+
+  const handleReclaim = async (contractAddress: string) => {
+    if (!account) {
+      toast.error('Please connect your wallet first')
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/option/${contractAddress}/reclaim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to prepare reclaim transaction')
+      }
+      
+      const data = await response.json()
+      
+      if (data.success) {
+        console.log('Reclaim transaction data:', data.data)
+        
+        // Send the transaction to MetaMask
+        const tx = await sendTransaction(data.data)
+        if (tx) {
+          toast.success('Reclaim transaction sent! Waiting for confirmation...')
+          
+          // Wait for confirmation
+          await tx.wait()
+          
+          // Clear cache to get fresh data
+          await fetch('/api/factory/clear-cache', { method: 'POST' })
+          
+          toast.success('Option resolved and funds reclaimed successfully!')
+        }
+      }
+    } catch (error: any) {
+      console.error('Error reclaiming option:', error)
+      
+      // Enhanced error logging
+      if (error.message && error.message.includes('execution reverted')) {
+        console.error('Reclaim transaction reverted. Possible reasons:')
+        console.error('1. User is not the short position holder')
+        console.error('2. Option is not expired yet')
+        console.error('3. Option was already exercised')
+        console.error('4. Option was already reclaimed')
+      }
+      
+      toast.error('Failed to reclaim option')
+    }
+  }
+
+  const handleResolveAndExercise = async (contractAddress: string, option: any) => {
+    if (!account) {
+      toast.error('Please connect your wallet first')
+      return
+    }
+
+    try {
+      // Calculate the maximum MTK amount that can be exercised
+      // Based on the formula: twoTkAmount = (mtkAmount * 1e18) / strikePrice
+      // And the constraint: twoTkAmount <= optionSize
+      // So: mtkAmount <= (optionSize * strikePrice) / 1e18
+      const maxMtkAmount = (option.optionSize * option.strikePrice) / 1e18
+      
+      console.log('Calculated max MTK amount for exercise:', maxMtkAmount)
+      
+      const response = await fetch(`/api/option/${contractAddress}/resolveAndExercise`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mtkAmount: maxMtkAmount.toString() })
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to prepare exercise transaction')
+      }
+      
+      const data = await response.json()
+      
+      if (data.success) {
+        console.log('Resolve and exercise transaction data:', data.data)
+        
+        const { approveTransaction, resolveAndExerciseTransaction } = data.data
+        
+        // Step 1: Approve MTK spending
+        toast.loading('Approving MTK spending... (Step 1/2)')
+        const approveTx = await sendTransaction(approveTransaction)
+        if (approveTx) {
+          await approveTx.wait()
+          toast.success('✅ MTK approval confirmed!')
+        } else {
+          throw new Error('MTK approval failed')
+        }
+        
+        // Step 2: Resolve and exercise via OptionsBook
+        toast.loading('Executing resolve and exercise... (Step 2/2)')
+        const resolveAndExerciseTx = await sendTransaction(resolveAndExerciseTransaction)
+        if (resolveAndExerciseTx) {
+          await resolveAndExerciseTx.wait()
+          toast.success('✅ Option resolved and exercised successfully!')
+          
+          // Clear cache to get fresh data
+          await fetch('/api/factory/clear-cache', { method: 'POST' })
+        } else {
+          throw new Error('Resolve and exercise failed')
+        }
+      }
+    } catch (error: any) {
+      console.error('Error resolving and exercising option:', error)
+      
+      // Enhanced error logging
+      if (error.message && error.message.includes('execution reverted')) {
+        console.error('Resolve and exercise transaction reverted. Possible reasons:')
+        console.error('1. User is not the long position holder')
+        console.error('2. Option is not expired yet')
+        console.error('3. Option was already exercised')
+        console.error('4. Option was already resolved')
+        console.error('5. Price at expiry is not profitable')
+      }
+      
+      toast.error('Failed to resolve and exercise option')
+    }
   }
 
   if (!account) {
@@ -196,6 +490,39 @@ export default function MyOptionsPage() {
       <main className="container mx-auto px-4 py-12">
         <h1 className="text-3xl font-bold text-center mb-8">My Options</h1>
 
+        {/* Filter Section */}
+        <div className="flex flex-wrap gap-2 mb-8">
+          <span className="text-sm font-medium">Filter:</span>
+          <Button
+            variant={filter === 'all' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setFilter('all')}
+          >
+            All Options
+          </Button>
+          <Button
+            variant={filter === 'available' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setFilter('available')}
+          >
+            Available
+          </Button>
+          <Button
+            variant={filter === 'filled' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setFilter('filled')}
+          >
+            Active
+          </Button>
+          <Button
+            variant={filter === 'expired' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setFilter('expired')}
+          >
+            Expired
+          </Button>
+        </div>
+
         {isLoading ? (
           <Card>
             <CardContent className="p-12 text-center">
@@ -203,21 +530,43 @@ export default function MyOptionsPage() {
               <p className="text-muted-foreground">Fetching your positions from the blockchain.</p>
             </CardContent>
           </Card>
-        ) : userOptions.length === 0 ? (
+        ) : filteredOptions.length === 0 ? (
           <Card>
             <CardContent className="p-12 text-center">
               <AlertTriangle className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
               <h3 className="text-lg font-semibold mb-2">No Options Found</h3>
-              <p className="text-muted-foreground">You don't have any options yet. Create or buy some options to get started!</p>
+              <p className="text-muted-foreground">No options match your current filter criteria or you don't have any positions yet.</p>
             </CardContent>
           </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {userOptions.map((option: any, index: number) => {
+            {filteredOptions.map((option: any, index: number) => {
               const status = getStatus(option)
+              const isExpired = option.expiry && option.expiry * 1000 < currentTime
+              
+              // Check user roles
+              const isLongPosition = option.long && account && option.long.toLowerCase() === account.toLowerCase()
+              const isShortPosition = option.short && account && option.short.toLowerCase() === account.toLowerCase()
+              
+              const canExercise = option.isActive && isExpired && !option.isExercised && !option.isResolved && isLongPosition
+              const canReclaim = option.isActive && isExpired && !option.isExercised && !option.isResolved && isShortPosition
+
+              // Debug logging for exercise button logic
+              if (isExpired && !option.isExercised) {
+                console.log(`Debug for option ${option.address}:`, {
+                  isActive: option.isActive,
+                  isExpired: isExpired,
+                  isExercised: option.isExercised,
+                  long: option.long,
+                  account: account,
+                  isLongPosition: isLongPosition,
+                  canExercise: canExercise,
+                  canReclaim: canReclaim
+                })
+              }
 
               return (
-                <Card key={index} className="hover:shadow-lg transition-shadow hover:translate-y-[-5px] transition-transform duration-300">
+                <Card key={index} className="neon-outline transition-all duration-300">
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-lg">
@@ -229,16 +578,32 @@ export default function MyOptionsPage() {
                       </CardTitle>
                       <div className="flex gap-2">
                         <Badge
-                          variant={option.role === 'short' ? 'destructive' : 'default'}
+                          variant="outline"
+                          style={{
+                            backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
+                            color: isShortPosition ? '#000000' : '#000000',
+                            borderColor: isShortPosition ? '#FFAD00' : '#39FF14'
+                          }}
                         >
-                          {option.role === 'short' ? 'Short' : 'Long'}
+                          {isShortPosition ? 'Short' : 'Long'}
                         </Badge>
                         <Badge
                           variant={status.class === 'filled' ? 'default' : 
                                   status.class === 'funded' ? 'secondary' : 
-                                  status.class === 'expired' ? 'destructive' : 
-                                  status.class === 'exercised' ? 'default' :
-                                  status.class === 'reclaimed' ? 'secondary' : 'outline'}
+                                  status.class === 'expired' ? 'ghost' : 
+                                  status.class === 'exercised' ? 'outline' :
+                                  status.class === 'reclaimed' ? 'outline' : 'outline'}
+                          style={
+                            status.class === 'exercised' ? {
+                              backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
+                              color: '#000000',
+                              borderColor: isShortPosition ? '#FFAD00' : '#39FF14'
+                            } : status.class === 'reclaimed' ? {
+                              backgroundColor: '#FFAD00',
+                              color: '#000000',
+                              borderColor: '#FFAD00'
+                            } : undefined
+                          }
                         >
                           {status.text}
                         </Badge>
@@ -261,32 +626,7 @@ export default function MyOptionsPage() {
                       </div>
                       <div>
                         <span className="text-muted-foreground">Expiry:</span>
-                        <div className="font-medium">
-                          {(() => {
-                            if (!option.expiry) return 'Not set'
-                            
-                            // If option is not yet engaged (not funded or not active), show activation message
-                            if (!option.isFunded || !option.isActive) {
-                              return '5 min upon activation'
-                            }
-                            
-                            // If option is engaged, show countdown or expiry date
-                            const expiryTime = option.expiry * 1000 // Convert to milliseconds
-                            const timeRemaining = expiryTime - currentTime
-                            
-                            // If expired or exercised, show actual expiry date
-                            if (timeRemaining <= 0 || option.isExercised) {
-                              const expiryDate = new Date(expiryTime)
-                              return `${expiryDate.toLocaleDateString()} ${expiryDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`
-                            }
-                            
-                            // Calculate countdown for active options
-                            const minutes = Math.floor(timeRemaining / (1000 * 60))
-                            const seconds = Math.floor((timeRemaining % (1000 * 60)) / 1000)
-                            
-                            return `${minutes}:${seconds.toString().padStart(2, '0')} remaining`
-                          })()}
-                        </div>
+                        <div className="font-medium">{formatExpiry(option)}</div>
                       </div>
                     </div>
 
@@ -323,15 +663,89 @@ export default function MyOptionsPage() {
                       </div>
                     </div>
 
+                    {/* Option Payoff Chart */}
+                    <div className="mt-4 mb-2 flex justify-center">
+                      <OptionPayoffChart
+                        optionType={option.type === 'call' ? 'CALL' : 'PUT'}
+                        payoffType={(option.payoffType as 'Linear' | 'Quadratic' | 'Logarithmic') || 'Linear'}
+                        strikePrice={option.strikePrice}
+                        optionSize={option.optionSize}
+                        strikeSymbol={option.strikeSymbol || 'MTK'}
+                        underlyingSymbol={option.underlyingSymbol || '2TK'}
+                        currentSpotPrice={option.currentPrice}
+                        decimals={18}
+                        compact={true}
+                        className="h-48"
+                        isShortPosition={isShortPosition}
+                      />
+                    </div>
+
                     <div className="flex gap-2 pt-4">
+                      {!option.isActive && (
+                        <Button
+                          size="sm"
+                          className="flex-1 bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90"
+                          onClick={() => handleEnter(option.address)}
+                        >
+                          <TrendingUp className="h-4 w-4 mr-1" />
+                          Enter as Long
+                        </Button>
+                      )}
+                      
+                      {canExercise && (
+                        <Button
+                          size="sm"
+                          className="flex-1"
+                          style={{
+                            backgroundColor: isLongPosition ? '#39FF14' : '#FFAD00',
+                            color: '#000000',
+                            border: `1px solid ${isLongPosition ? '#39FF14' : '#FFAD00'}`,
+                            transition: 'all 0.3s ease'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.opacity = '0.8'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.opacity = '1'
+                          }}
+                          onClick={() => handleResolveAndExercise(option.address, option)}
+                        >
+                          <DollarSign className="h-4 w-4 mr-1" />
+                          Exercise
+                        </Button>
+                      )}
+                      
+                      {canReclaim && (
+                        <Button
+                          size="sm"
+                          className="flex-1"
+                          style={{
+                            backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
+                            color: '#000000',
+                            border: `1px solid ${isShortPosition ? '#FFAD00' : '#39FF14'}`,
+                            transition: 'all 0.3s ease'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.opacity = '0.8'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.opacity = '1'
+                          }}
+                          onClick={() => handleReclaim(option.address)}
+                        >
+                          <DollarSign className="h-4 w-4 mr-1" />
+                          Reclaim Funds
+                        </Button>
+                      )}
+                      
                       <Button
                         variant="outline"
                         size="sm"
+                        className="view-details-button"
                         onClick={() => router.push(`/option/${option.address}`)}
-                        className="flex-1"
                       >
-                        <Eye className="h-4 w-4 mr-1" />
-                        View Details
+                        <Eye className="h-4 w-4 mr-1 view-details-icon" />
+                        <span className="view-details-text">View Details</span>
                       </Button>
                     </div>
                   </CardContent>

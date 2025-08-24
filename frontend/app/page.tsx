@@ -224,11 +224,11 @@ export default function HomePage() {
       <main className="container mx-auto px-4 py-12">
         <div className="text-center mb-16">
           <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-6xl">
-            Blockchain Layer-3 Protocol for
-            <br />
             <span className="bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent animate-gradient">
               Decentralized Derivatives Exchange
             </span>
+            <br />
+            Blockchain Layer-3 Protocol
           </h1>
         </div>
 
