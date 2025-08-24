@@ -10,10 +10,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Plus, DollarSign, AlertTriangle } from 'lucide-react'
+import { Plus, DollarSign, AlertTriangle, CheckCircle, Copy, ExternalLink, Sparkles } from 'lucide-react'
 
 // Real wallet context hook
 import { useWallet } from "@/components/wallet-context"
+import { ethers } from 'ethers'
 
 // Real data fetching hook
 const useQuery = (key: string, fetchFn: () => Promise<any>, options?: any) => {
@@ -67,7 +68,7 @@ const toast = {
 
 export default function CreateOptionPage() {
   const router = useRouter()
-  const { account, sendTransaction } = useWallet()
+  const { account, provider, sendTransaction } = useWallet()
   const [formData, setFormData] = useState({
     underlyingToken: '',
     strikeToken: '',
@@ -170,26 +171,39 @@ export default function CreateOptionPage() {
         toast.dismiss(loadingToast)
         toast.loading('Checking token allowance...')
         
-        // Simplified allowance check for frontend
-        console.log('Required allowance check for:', {
+        if (!provider) {
+          throw new Error('Provider not available')
+        }
+
+        const tokenContract = new ethers.Contract(
           tokenToApprove,
-          amountToApprove,
-          optionsBookAddress
-        })
+          ['function allowance(address owner, address spender) view returns (uint256)'],
+          provider
+        )
         
-        // Step 3: Send separate approval transaction
-        toast.dismiss()
-        toast.loading('Please approve token spending... (Transaction 1/2)')
+        const currentAllowance = await tokenContract.allowance(account, optionsBookAddress)
+        const requiredAmount = ethers.getBigInt(amountToApprove)
         
-        console.log('Sending approval transaction:', approveTransaction)
-        const approveTx = await sendTransaction(approveTransaction)
+        console.log('Current allowance:', ethers.formatUnits(currentAllowance, 18))
+        console.log('Required amount:', ethers.formatUnits(requiredAmount, 18))
         
-        if (approveTx) {
-          toast.loading('Waiting for approval confirmation... (Transaction 1/2)')
-          await approveTx.wait()
-          toast.success('✅ Token approval confirmed!')
+        // Step 3: Send separate approval transaction if needed (force for testing new contract)
+        if (currentAllowance < requiredAmount || true) {
+          toast.dismiss()
+          toast.loading('Please approve token spending... (Transaction 1/2)')
+          
+          console.log('Sending approval transaction:', approveTransaction)
+          const approveTx = await sendTransaction(approveTransaction)
+          
+          if (approveTx) {
+            toast.loading('Waiting for approval confirmation... (Transaction 1/2)')
+            await approveTx.wait()
+            toast.success('✅ Token approval confirmed!')
+          } else {
+            throw new Error('Approval transaction failed')
+          }
         } else {
-          throw new Error('Approval transaction failed')
+          toast.success('✅ Token already approved!')
         }
         
         // Step 4: Send separate option creation transaction
@@ -200,6 +214,31 @@ export default function CreateOptionPage() {
         console.log('  - To:', createTransaction.to)
         console.log('  - Data length:', createTransaction.data?.length)
         console.log('  - Gas estimation...')
+        
+        // Try to estimate gas first to get better error info
+        try {
+          const gasEstimate = await provider.estimateGas({
+            to: createTransaction.to,
+            data: createTransaction.data,
+            from: account
+          })
+          console.log('✅ Gas estimate successful:', gasEstimate.toString())
+        } catch (gasError: any) {
+          console.error('❌ Gas estimation failed:', gasError)
+          console.error('❌ Gas error details:', {
+            code: gasError.code,
+            reason: gasError.reason,
+            data: gasError.data,
+            transaction: gasError.transaction
+          })
+          
+          // Try to decode the error
+          if (gasError.data) {
+            console.error('❌ Raw error data:', gasError.data)
+          }
+          
+          throw new Error(`Gas estimation failed: ${gasError.reason || gasError.message}`)
+        }
         
         const tx = await sendTransaction(createTransaction)
         
@@ -218,13 +257,14 @@ export default function CreateOptionPage() {
             console.log('Extracting contract address from transaction receipt...')
             
             // Look for OptionCreated event in the logs
-            const optionCreatedLog = receipt.logs?.find((log: any) => {
+            const optionCreatedLog = receipt.logs.find((log: any) => {
+              // OptionsBook OptionCreated event has 3 topics: event signature, creator, instance
               return log.topics && log.topics.length === 3
             })
             
             if (optionCreatedLog) {
-              // Extract contract address from log
-              contractAddress = '0x' + optionCreatedLog.topics[2].slice(26)
+              // The contract address is the second indexed parameter (topics[2])
+              contractAddress = ethers.getAddress('0x' + optionCreatedLog.topics[2].slice(26))
               console.log('✅ Extracted contract address from logs:', contractAddress)
             }
           } catch (error) {
@@ -232,7 +272,7 @@ export default function CreateOptionPage() {
           }
           
           // Auto-register the contract in the database
-          if (contractAddress) {
+          if (contractAddress && ethers.isAddress(contractAddress)) {
             try {
               console.log('Auto-registering contract in database...')
               await fetch('/api/contracts/auto-register', {
@@ -520,59 +560,134 @@ export default function CreateOptionPage() {
         </Card>
 
         {contractDeploymentInfo && (
-          <Card className="mt-8 border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950">
-            <CardHeader>
-              <CardTitle className="text-green-700 dark:text-green-300">
-                ✅ {optionType === 'call' ? 'Call' : 'Put'} Option Contract Created Successfully!
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded border">
-                <div>
-                  <strong>Transaction Hash:</strong><br />
-                  <code className="text-sm">{contractDeploymentInfo.txHash}</code>
+          <div className="mt-12 relative">
+            {/* Animated background gradient */}
+            <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-accent/20 to-primary/20 rounded-3xl blur-xl animate-gradient"></div>
+            
+            <Card className="relative backdrop-blur-sm border-2 border-primary/30 bg-card/80 shadow-2xl">
+              <CardHeader className="pb-6">
+                <div className="flex items-center justify-center mb-4">
+                  <div className="relative">
+                    <div className="absolute inset-0 bg-gradient-to-r from-primary to-accent rounded-full animate-pulse opacity-20"></div>
+                    <div className="relative bg-gradient-to-r from-primary to-accent p-4 rounded-full">
+                      <CheckCircle className="h-8 w-8 text-primary-foreground" />
+                    </div>
+                  </div>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => copyToClipboard(contractDeploymentInfo.txHash)}
-                >
-                  Copy
-                </Button>
-              </div>
+                
+                <CardTitle className="text-center text-2xl font-bold bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent animate-gradient bg-[length:200%_auto]">
+                  <Sparkles className="inline h-6 w-6 mr-2 text-primary" />
+                  {optionType === 'call' ? 'Call' : 'Put'} Option Contract Created!
+                  <Sparkles className="inline h-6 w-6 ml-2 text-accent" />
+                </CardTitle>
+                
+                <p className="text-center text-muted-foreground mt-2">
+                  Your option contract has been deployed successfully and is ready for trading.
+                </p>
+              </CardHeader>
               
-              <div className="flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded border">
-                <div>
-                  <strong>Contract Address:</strong><br />
-                  <code className="text-sm">{contractDeploymentInfo.contractAddress}</code>
+              <CardContent className="space-y-6">
+                {/* Contract Details Section */}
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                    <ExternalLink className="h-5 w-5 text-primary" />
+                    Contract Details
+                  </h3>
+                  
+                  {/* Transaction Hash */}
+                  <div className="group relative overflow-hidden rounded-xl border border-border bg-gradient-to-r from-muted/50 to-muted p-4 transition-all hover:from-primary/5 hover:to-accent/5 hover:border-primary/30">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="w-2 h-2 bg-gradient-to-r from-primary to-accent rounded-full"></div>
+                          <label className="text-sm font-medium text-muted-foreground">Transaction Hash</label>
+                        </div>
+                        <div className="font-mono text-sm text-foreground break-all bg-muted/30 p-2 rounded-lg border border-border/50">
+                          {contractDeploymentInfo.txHash}
+                        </div>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => copyToClipboard(contractDeploymentInfo.txHash)}
+                        className="wallet-button flex-shrink-0 transition-all hover:border-primary/50"
+                      >
+                        <Copy className="h-4 w-4 wallet-icon" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Contract Address */}
+                  <div className="group relative overflow-hidden rounded-xl border border-border bg-gradient-to-r from-muted/50 to-muted p-4 transition-all hover:from-accent/5 hover:to-primary/5 hover:border-accent/30">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="w-2 h-2 bg-gradient-to-r from-accent to-primary rounded-full"></div>
+                          <label className="text-sm font-medium text-muted-foreground">Contract Address</label>
+                        </div>
+                        <div className="font-mono text-sm text-foreground break-all bg-muted/30 p-2 rounded-lg border border-border/50">
+                          {contractDeploymentInfo.contractAddress}
+                        </div>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => copyToClipboard(contractDeploymentInfo.contractAddress)}
+                        className="wallet-button flex-shrink-0 transition-all hover:border-accent/50"
+                      >
+                        <Copy className="h-4 w-4 wallet-icon" />
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => copyToClipboard(contractDeploymentInfo.contractAddress)}
-                >
-                  Copy
-                </Button>
-              </div>
-              
-              <div className="text-sm text-muted-foreground">
-                You can now:<br />
-                1. Fund the contract (as the short seller)<br />
-                2. Have someone enter as long position
-              </div>
-              
-              <Button 
-                onClick={() => router.push(`/option/${contractDeploymentInfo.contractAddress}`)}
-                className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90"
-              >
-                View Contract Details
-              </Button>
-              
-              <p className="text-xs text-muted-foreground text-center">
-                Click the button above when ready to manage your contract
-              </p>
-            </CardContent>
-          </Card>
+
+                {/* Next Steps Section */}
+                <div className="relative">
+                  <div className="absolute inset-0 bg-gradient-to-r from-primary/10 to-accent/10 rounded-2xl"></div>
+                  <div className="relative bg-card/50 backdrop-blur-sm border border-primary/20 rounded-2xl p-6">
+                    <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
+                      <div className="w-2 h-2 bg-gradient-to-r from-primary to-accent rounded-full animate-pulse"></div>
+                      What's Next?
+                    </h3>
+                    
+                    <div className="space-y-3 text-sm">
+                      <div className="flex items-start gap-3 p-3 bg-primary/5 rounded-lg border border-primary/10">
+                        <div className="w-6 h-6 bg-gradient-to-r from-primary to-accent rounded-full flex items-center justify-center flex-shrink-0 text-primary-foreground text-xs font-bold">1</div>
+                        <div>
+                          <div className="font-medium text-foreground">Fund the Contract</div>
+                          <div className="text-muted-foreground">As the short position holder, provide the underlying tokens to activate the option</div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-start gap-3 p-3 bg-accent/5 rounded-lg border border-accent/10">
+                        <div className="w-6 h-6 bg-gradient-to-r from-accent to-primary rounded-full flex items-center justify-center flex-shrink-0 text-accent-foreground text-xs font-bold">2</div>
+                        <div>
+                          <div className="font-medium text-foreground">Share with Buyers</div>
+                          <div className="text-muted-foreground">Others can enter as long position holders to activate trading</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Primary Action Button */}
+                <div className="relative group">
+                  <div className="absolute -inset-1 bg-gradient-to-r from-primary via-accent to-primary rounded-xl blur opacity-25 group-hover:opacity-50 transition duration-300 animate-gradient bg-[length:200%_auto]"></div>
+                  <Button 
+                    onClick={() => router.push(`/option/${contractDeploymentInfo.contractAddress}`)}
+                    className="relative w-full view-details-button bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 text-lg py-6 font-semibold shadow-lg"
+                  >
+                    <span className="view-details-text">Manage Your Contract</span>
+                    <ExternalLink className="h-5 w-5 ml-2 view-details-icon" />
+                  </Button>
+                </div>
+                
+                <p className="text-xs text-muted-foreground text-center opacity-70">
+                  Your contract is now live and ready for interaction
+                </p>
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {oraclePrices?.prices && (

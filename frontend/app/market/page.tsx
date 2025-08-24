@@ -18,22 +18,22 @@ const useQuery = (key: string, fetchFn: () => Promise<any>, options?: any) => {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<any>(null)
 
+  const fetchData = async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const result = await fetchFn()
+      setData(result)
+    } catch (err) {
+      setError(err)
+      console.error(`Error fetching ${key}:`, err)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   useEffect(() => {
     if (options?.enabled === false) return
-
-    const fetchData = async () => {
-      setIsLoading(true)
-      setError(null)
-      try {
-        const result = await fetchFn()
-        setData(result)
-      } catch (err) {
-        setError(err)
-        console.error(`Error fetching ${key}:`, err)
-      } finally {
-        setIsLoading(false)
-      }
-    }
 
     fetchData()
 
@@ -44,7 +44,7 @@ const useQuery = (key: string, fetchFn: () => Promise<any>, options?: any) => {
     }
   }, [key, options?.refetchInterval, options?.enabled])
 
-  return { data, isLoading, error }
+  return { data, isLoading, error, refetch: fetchData }
 }
 
 // Toast notification system (simplified)
@@ -136,7 +136,7 @@ export default function OptionsMarketPage() {
   }
 
   // Fetch options from current OptionsBook factory (on-chain source of truth)
-  const { data: optionsData, isLoading } = useQuery(
+  const { data: optionsData, isLoading, refetch: refetchOptions } = useQuery(
     'options',
     async () => {
       const response = await fetch('/api/factory/all-contracts')
@@ -215,8 +215,11 @@ export default function OptionsMarketPage() {
         toast.dismiss(loadingToast)
         toast.loading('Checking premium token allowance...')
         
-        const provider = new (window as any).ethereum
-        // Simplified allowance check - in production you'd use proper ethers.js
+        console.log('Required allowance info:', {
+          premiumToken,
+          premiumAmount,
+          optionsBookAddress
+        })
         
         // Step 2: Send separate approval transaction if needed
         toast.dismiss()
@@ -261,6 +264,14 @@ export default function OptionsMarketPage() {
             console.log('Long entry recorded in database')
           } catch (error) {
             console.warn('Failed to record long entry:', error)
+          }
+          
+          // Refresh options data to show updated contract state
+          try {
+            await refetchOptions()
+            console.log('Options data refreshed after long entry')
+          } catch (error) {
+            console.warn('Failed to refresh options data:', error)
           }
         }
       }
@@ -318,6 +329,14 @@ export default function OptionsMarketPage() {
           await fetch('/api/factory/clear-cache', { method: 'POST' })
           
           toast.success('Option resolved and funds reclaimed successfully!')
+          
+          // Refresh options data to show updated contract state
+          try {
+            await refetchOptions()
+            console.log('Options data refreshed after reclaim')
+          } catch (error) {
+            console.warn('Failed to refresh options data:', error)
+          }
         }
       }
     } catch (error: any) {
@@ -387,6 +406,14 @@ export default function OptionsMarketPage() {
           
           // Clear cache to get fresh data
           await fetch('/api/factory/clear-cache', { method: 'POST' })
+          
+          // Refresh options data to show updated contract state
+          try {
+            await refetchOptions()
+            console.log('Options data refreshed after exercise')
+          } catch (error) {
+            console.warn('Failed to refresh options data:', error)
+          }
         } else {
           throw new Error('Resolve and exercise failed')
         }
@@ -542,6 +569,13 @@ export default function OptionsMarketPage() {
                                 color: '#000000',
                                 borderColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493'
                               }
+                            } else if (status.class === 'expired') {
+                              // This covers "Unresolved" status - just text color, no background or border
+                              return {
+                                backgroundColor: 'transparent',
+                                color: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493',
+                                border: 'none'
+                              }
                             }
                             return undefined
                           })()}
@@ -623,72 +657,186 @@ export default function OptionsMarketPage() {
                     </div>
 
                     <div className="flex gap-2 pt-4">
-                      {!option.isActive && (
-                        <Button
-                          size="sm"
-                          className="flex-1 bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90"
-                          onClick={() => handleEnter(option.address)}
-                        >
-                          <TrendingUp className="h-4 w-4 mr-1" />
-                          Enter as Long
-                        </Button>
-                      )}
+                      {!option.isActive && (() => {
+                        const isNonUserContract = !account || 
+                          (!option.short || account.toLowerCase() !== option.short.toLowerCase()) && 
+                          (!option.long || account.toLowerCase() !== option.long.toLowerCase())
+                        
+                        const buttonColor = isNonUserContract ? '#ff1493' : '#39FF14'
+                        
+                        return (
+                          <Button
+                            size="sm"
+                            className="flex-1 group transition-all duration-300"
+                            style={{
+                              backgroundColor: buttonColor,
+                              color: '#000000',
+                              border: `1px solid ${buttonColor}`,
+                              transition: 'all 0.3s ease'
+                            }}
+                            onMouseEnter={(e) => {
+                              if (isNonUserContract) {
+                                // For non-user contracts, keep the pink color animation
+                                e.currentTarget.style.background = '#ff1493'
+                                e.currentTarget.style.opacity = '0.9'
+                                e.currentTarget.style.transform = 'scale(1.05)'
+                              } else {
+                                // For user contracts, apply gradient animation with fade-in
+                                const element = e.currentTarget
+                                element.style.transition = 'background 0.5s ease-in-out, background-size 0.5s ease-in-out'
+                                setTimeout(() => {
+                                  if (element && element.style) {
+                                    element.style.background = `linear-gradient(45deg, var(--primary), var(--accent), var(--primary))`
+                                    element.style.backgroundSize = '250% 250%'
+                                    setTimeout(() => {
+                                      if (element && element.style) {
+                                        element.style.animation = 'gradient-shift-strong 3.1s ease-in-out infinite'
+                                      }
+                                    }, 200)
+                                  }
+                                }, 100)
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              // Reset to original color with smooth transition
+                              const element = e.currentTarget
+                              if (element && element.style) {
+                                element.style.animation = 'none'
+                                element.style.transition = 'all 0.3s ease-in-out'
+                                element.style.background = buttonColor
+                                element.style.backgroundSize = 'auto'
+                                element.style.opacity = '1'
+                                element.style.transform = 'scale(1)'
+                              }
+                            }}
+                            onClick={() => handleEnter(option.address)}
+                          >
+                            <TrendingUp className="h-4 w-4 mr-1" />
+                            <span>Enter as Long</span>
+                          </Button>
+                        )
+                      })()}
                       
-                      {canExercise && (
-                        <Button
-                          size="sm"
-                          className="flex-1"
-                          style={{
-                            backgroundColor: isLongPosition ? '#39FF14' : '#FFAD00',
-                            color: '#000000',
-                            border: `1px solid ${isLongPosition ? '#39FF14' : '#FFAD00'}`,
-                            transition: 'all 0.3s ease'
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.opacity = '0.8'
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.opacity = '1'
-                          }}
-                          onClick={() => handleResolveAndExercise(option.address, option)}
-                        >
-                          <DollarSign className="h-4 w-4 mr-1" />
-                          Exercise
-                        </Button>
-                      )}
+                      {canExercise && (() => {
+                        const buttonIsLong = option.long && account && option.long.toLowerCase() === account.toLowerCase()
+                        const buttonColor = buttonIsLong ? '#39FF14' : '#FFAD00'
+                        
+                        return (
+                          <Button
+                            size="sm"
+                            className="flex-1 group transition-all duration-300"
+                            style={{
+                              backgroundColor: buttonColor,
+                              color: '#000000',
+                              border: `1px solid ${buttonColor}`,
+                              transition: 'all 0.3s ease'
+                            }}
+                            onMouseEnter={(e) => {
+                              // Create animated background gradient with fade-in
+                              const element = e.currentTarget
+                              element.style.transition = 'background 0.5s ease-in-out, background-size 0.5s ease-in-out'
+                              setTimeout(() => {
+                                if (element && element.style) {
+                                  element.style.background = `linear-gradient(45deg, var(--primary), var(--accent), var(--primary))`
+                                  element.style.backgroundSize = '250% 250%'
+                                  setTimeout(() => {
+                                    if (element && element.style) {
+                                      element.style.animation = 'gradient-shift-strong 3.1s ease-in-out infinite'
+                                    }
+                                  }, 200)
+                                }
+                              }, 100)
+                            }}
+                            onMouseLeave={(e) => {
+                              // Reset to original color with smooth transition
+                              const element = e.currentTarget
+                              if (element && element.style) {
+                                element.style.animation = 'none'
+                                element.style.transition = 'all 0.3s ease-in-out'
+                                element.style.background = buttonColor
+                                element.style.backgroundSize = 'auto'
+                              }
+                            }}
+                            onClick={() => handleResolveAndExercise(option.address, option)}
+                          >
+                            <DollarSign className="h-4 w-4 mr-1" />
+                            <span>Exercise</span>
+                          </Button>
+                        )
+                      })()}
                       
-                      {canReclaim && (
-                        <Button
-                          size="sm"
-                          className="flex-1"
-                          style={{
-                            backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
-                            color: '#000000',
-                            border: `1px solid ${isShortPosition ? '#FFAD00' : '#39FF14'}`,
-                            transition: 'all 0.3s ease'
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.opacity = '0.8'
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.opacity = '1'
-                          }}
-                          onClick={() => handleReclaim(option.address)}
-                        >
-                          <DollarSign className="h-4 w-4 mr-1" />
-                          Reclaim Funds
-                        </Button>
-                      )}
+                      {canReclaim && (() => {
+                        const isLongPosition = option.long && account && option.long.toLowerCase() === account.toLowerCase()
+                        const isShortPosition = option.short && account && option.short.toLowerCase() === account.toLowerCase()
+                        
+                        return (
+                          <Button
+                            size="sm"
+                            className="flex-1 group transition-all duration-300"
+                            style={{
+                              backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
+                              color: '#000000',
+                              border: `1px solid ${isShortPosition ? '#FFAD00' : '#39FF14'}`,
+                              transition: 'all 0.3s ease'
+                            }}
+                            onMouseEnter={(e) => {
+                              // Create animated background gradient with fade-in
+                              const element = e.currentTarget
+                              element.style.transition = 'background 0.5s ease-in-out, background-size 0.5s ease-in-out'
+                              setTimeout(() => {
+                                if (element && element.style) {
+                                  element.style.background = `linear-gradient(45deg, var(--primary), var(--accent), var(--primary))`
+                                  element.style.backgroundSize = '250% 250%'
+                                  setTimeout(() => {
+                                    if (element && element.style) {
+                                      element.style.animation = 'gradient-shift-strong 3.1s ease-in-out infinite'
+                                    }
+                                  }, 200)
+                                }
+                              }, 100)
+                            }}
+                            onMouseLeave={(e) => {
+                              // Reset to original color with smooth transition
+                              const element = e.currentTarget
+                              if (element && element.style) {
+                                element.style.animation = 'none'
+                                element.style.transition = 'all 0.3s ease-in-out'
+                                element.style.background = isShortPosition ? '#FFAD00' : '#39FF14'
+                                element.style.backgroundSize = 'auto'
+                              }
+                            }}
+                            onClick={() => handleReclaim(option.address)}
+                          >
+                            <DollarSign className="h-4 w-4 mr-1" />
+                            <span>Reclaim Funds</span>
+                          </Button>
+                        )
+                      })()}
                       
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="view-details-button"
-                        onClick={() => router.push(`/option/${option.address}`)}
-                      >
-                        <Eye className="h-4 w-4 mr-1 view-details-icon" />
-                        <span className="view-details-text">View Details</span>
-                      </Button>
+                      {(() => {
+                        const isLongPosition = option.long && account && option.long.toLowerCase() === account.toLowerCase()
+                        const isShortPosition = option.short && account && option.short.toLowerCase() === account.toLowerCase()
+                        const isNonUserContract = !isLongPosition && !isShortPosition
+                        
+                        const buttonColor = isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493'
+                        
+                        return (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="view-details-button transition-all duration-300 hover:bg-transparent"
+                            style={{
+                              color: buttonColor,
+                              border: 'none',
+                              background: 'none'
+                            }}
+                            onClick={() => router.push(`/option/${option.address}`)}
+                          >
+                            <Eye className="h-4 w-4 mr-1 view-details-icon" />
+                            <span className="view-details-text">View Details</span>
+                          </Button>
+                        )
+                      })()}
                     </div>
                   </CardContent>
                 </Card>

@@ -223,8 +223,11 @@ export default function MyOptionsPage() {
         toast.dismiss(loadingToast)
         toast.loading('Checking premium token allowance...')
         
-        const provider = new (window as any).ethereum
-        // Simplified allowance check - in production you'd use proper ethers.js
+        console.log('Required allowance info:', {
+          premiumToken,
+          premiumAmount,
+          optionsBookAddress
+        })
         
         // Step 2: Send separate approval transaction if needed
         toast.dismiss()
