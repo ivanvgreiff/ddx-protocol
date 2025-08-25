@@ -26,8 +26,11 @@ export function Header() {
               </a>
             </div>
             <nav className="hidden md:ml-10 md:flex md:space-x-8">
-              <a href="/market" className="text-foreground hover:text-primary transition-colors">
+              <a href="/options-book" className="text-foreground hover:text-primary transition-colors">
                 Options Book
+              </a>
+              <a href="/futures-book" className="text-foreground hover:text-primary transition-colors">
+                Futures Book
               </a>
               <a href="/my-options" className="text-foreground hover:text-primary transition-colors">
                 My Options
@@ -70,8 +73,11 @@ export function Header() {
         {isMenuOpen && (
           <div className="md:hidden">
             <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
-              <a href="/market" className="block px-3 py-2 text-foreground hover:text-primary">
+              <a href="/options-book" className="block px-3 py-2 text-foreground hover:text-primary">
                 Options Book
+              </a>
+              <a href="/futures-book" className="block px-3 py-2 text-foreground hover:text-primary">
+                Futures Book
               </a>
               <a href="/my-options" className="block px-3 py-2 text-foreground hover:text-primary">
                 My Options

@@ -79,8 +79,11 @@ export default function CreateOptionPage() {
     premium: '',
     oracle: ''
   })
+  const [contractType, setContractType] = useState('option') // 'option' or 'future'
   const [optionType, setOptionType] = useState('call')
   const [payoffType, setPayoffType] = useState('Linear')
+  const [makerSide, setMakerSide] = useState('short') // 'long' or 'short' - only for futures
+  const [expirySeconds, setExpirySeconds] = useState('300') // Default 5 minutes for futures
   const [isCreating, setIsCreating] = useState(false)
   const [contractDeploymentInfo, setContractDeploymentInfo] = useState<any>(null)
 
@@ -141,9 +144,19 @@ export default function CreateOptionPage() {
       const requestData = {
         ...formData,
         userAddress: account,
-        payoffType: payoffType
+        payoffType: payoffType,
+        ...(contractType === 'future' && {
+          makerSide: makerSide,
+          expirySeconds: expirySeconds || '300'
+        })
       }
-      const endpoint = optionType === 'call' ? '/api/option/create-call' : '/api/option/create-put'
+      
+      let endpoint: string
+      if (contractType === 'future') {
+        endpoint = '/api/futures/create-future'
+      } else {
+        endpoint = optionType === 'call' ? '/api/option/create-call' : '/api/option/create-put'
+      }
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -207,7 +220,9 @@ export default function CreateOptionPage() {
         }
         
         // Step 4: Send separate option creation transaction
-        toast.loading('Please confirm option creation... (Transaction 2/2)')
+        toast.loading(contractType === 'future' 
+          ? 'Waiting for futures creation confirmation...'
+          : 'Waiting for option creation confirmation...')
         
         console.log('Sending option creation transaction:', createTransaction)
         console.log('🔍 DEBUG: Transaction details:')
@@ -243,7 +258,9 @@ export default function CreateOptionPage() {
         const tx = await sendTransaction(createTransaction)
         
         if (tx) {
-          toast.loading('Waiting for option creation confirmation...')
+          toast.loading(contractType === 'future' 
+            ? 'Waiting for futures creation confirmation...'
+            : 'Waiting for option creation confirmation...')
           
           // Wait for confirmation
           const receipt = await tx.wait()
@@ -256,16 +273,30 @@ export default function CreateOptionPage() {
           try {
             console.log('Extracting contract address from transaction receipt...')
             
-            // Look for OptionCreated event in the logs
-            const optionCreatedLog = receipt.logs.find((log: any) => {
-              // OptionsBook OptionCreated event has 3 topics: event signature, creator, instance
-              return log.topics && log.topics.length === 3
-            })
-            
-            if (optionCreatedLog) {
-              // The contract address is the second indexed parameter (topics[2])
-              contractAddress = ethers.getAddress('0x' + optionCreatedLog.topics[2].slice(26))
-              console.log('✅ Extracted contract address from logs:', contractAddress)
+            if (contractType === 'future') {
+              // Look for FutureCreated event in the logs for futures
+              const futureCreatedLog = receipt.logs.find((log: any) => {
+                // FuturesBook FutureCreated event has 4 topics: event signature, creator, instance, futureType
+                return log.topics && log.topics.length === 4
+              })
+              
+              if (futureCreatedLog) {
+                // The contract address is the second indexed parameter (topics[2]) for futures
+                contractAddress = ethers.getAddress('0x' + futureCreatedLog.topics[2].slice(26))
+                console.log('✅ Extracted futures contract address from logs:', contractAddress)
+              }
+            } else {
+              // Look for OptionCreated event in the logs for options
+              const optionCreatedLog = receipt.logs.find((log: any) => {
+                // OptionsBook OptionCreated event has 3 topics: event signature, creator, instance
+                return log.topics && log.topics.length === 3
+              })
+              
+              if (optionCreatedLog) {
+                // The contract address is the second indexed parameter (topics[2])
+                contractAddress = ethers.getAddress('0x' + optionCreatedLog.topics[2].slice(26))
+                console.log('✅ Extracted option contract address from logs:', contractAddress)
+              }
             }
           } catch (error) {
             console.warn('Failed to extract contract address from logs:', error)
@@ -275,25 +306,54 @@ export default function CreateOptionPage() {
           if (contractAddress && ethers.isAddress(contractAddress)) {
             try {
               console.log('Auto-registering contract in database...')
-              await fetch('/api/contracts/auto-register', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  transactionHash: deployTxHash,
-                  contractAddress: contractAddress,
-                  optionType: optionType,
-                  shortAddress: account,
-                  underlyingToken: formData.underlyingToken,
-                  strikeToken: formData.strikeToken,
-                  underlyingSymbol: formData.underlyingSymbol,
-                  strikeSymbol: formData.strikeSymbol,
-                  strikePrice: formData.strikePrice,
-                  optionSize: formData.optionSize,
-                  premium: formData.premium,
-                  oracle: formData.oracle
+              
+              if (contractType === 'future') {
+                // Auto-register futures contract
+                await fetch('/api/contracts/auto-register', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    transactionHash: deployTxHash,
+                    contractAddress: contractAddress,
+                    contractType: 'future',
+                    payoffType: payoffType,
+                    makerSide: makerSide,
+                    shortAddress: account,
+                    underlyingToken: formData.underlyingToken,
+                    strikeToken: formData.strikeToken,
+                    underlyingSymbol: formData.underlyingSymbol,
+                    strikeSymbol: formData.strikeSymbol,
+                    strikePrice: formData.strikePrice,
+                    optionSize: formData.optionSize,
+                    premium: '0', // Futures have 0 premium
+                    oracle: formData.oracle,
+                    expirySeconds: expirySeconds
+                  })
                 })
-              })
-              console.log('✅ Contract auto-registered successfully')
+                console.log('✅ Futures contract auto-registered successfully')
+              } else {
+                // Auto-register options contract
+                await fetch('/api/contracts/auto-register', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    transactionHash: deployTxHash,
+                    contractAddress: contractAddress,
+                    optionType: optionType,
+                    payoffType: payoffType,
+                    shortAddress: account,
+                    underlyingToken: formData.underlyingToken,
+                    strikeToken: formData.strikeToken,
+                    underlyingSymbol: formData.underlyingSymbol,
+                    strikeSymbol: formData.strikeSymbol,
+                    strikePrice: formData.strikePrice,
+                    optionSize: formData.optionSize,
+                    premium: formData.premium,
+                    oracle: formData.oracle
+                  })
+                })
+                console.log('✅ Option contract auto-registered successfully')
+              }
             } catch (error) {
               console.warn('Failed to auto-register contract:', error)
             }
@@ -304,7 +364,9 @@ export default function CreateOptionPage() {
             contractAddress = `Transaction: ${deployTxHash.substring(0, 10)}...`
           }
           
-          toast.success(`${optionType === 'call' ? 'Call' : 'Put'} option contract deployed at: ${contractAddress}`)
+          toast.success(contractType === 'future' 
+            ? `Linear finite future contract deployed at: ${contractAddress}`
+            : `${optionType === 'call' ? 'Call' : 'Put'} option contract deployed at: ${contractAddress}`)
           console.log('Deploy transaction hash:', deployTxHash)
           console.log('Contract address:', contractAddress)
           
@@ -357,7 +419,11 @@ export default function CreateOptionPage() {
       <div className="min-h-screen bg-background">
         <Header />
         <main className="container mx-auto px-4 py-12">
-          <h1 className="text-3xl font-bold text-center mb-8">Create Option</h1>
+          <h1 className="text-3xl font-bold text-center mb-8">Draft Contract</h1>
+          <p className="text-muted-foreground text-center mb-8 max-w-2xl mx-auto">
+            Create options with upfront premiums or futures with fixed settlement terms. 
+            Choose your contract type and configure the parameters below.
+          </p>
           <Card className="max-w-md mx-auto">
             <CardContent className="p-6">
               <div className="text-center">
@@ -378,7 +444,7 @@ export default function CreateOptionPage() {
       <main className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-3xl font-bold text-center mb-8 flex items-center justify-center">
           <Plus className="h-8 w-8 mr-2" />
-          Create New {payoffType} {optionType === 'call' ? 'Call' : 'Put'} Option
+          {contractType === 'future' ? 'Create New Future' : `Create New ${payoffType} ${optionType === 'call' ? 'Call' : 'Put'} Option`}
         </h1>
 
         <Alert className="mb-8">
@@ -412,19 +478,58 @@ export default function CreateOptionPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Contract Type Selector */}
+              <div>
+                <Label htmlFor="contractType">Contract Type</Label>
+                <Select value={contractType} onValueChange={setContractType}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="option">Options Contract</SelectItem>
+                    <SelectItem value="future">Futures Contract</SelectItem>
+                  </SelectContent>
+                </Select>
+                {contractType === 'future' && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Create a linear finite future with fixed settlement terms at expiry
+                  </p>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="optionType">Option Type</Label>
-                  <Select value={optionType} onValueChange={setOptionType}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="call">Call Option</SelectItem>
-                      <SelectItem value="put">Put Option</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                {contractType === 'option' && (
+                  <div>
+                    <Label htmlFor="optionType">Option Type</Label>
+                    <Select value={optionType} onValueChange={setOptionType}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="call">Call Option</SelectItem>
+                        <SelectItem value="put">Put Option</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {contractType === 'future' && (
+                  <div>
+                    <Label htmlFor="makerSide">Your Position (First to Enter)</Label>
+                    <Select value={makerSide} onValueChange={setMakerSide}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="long">Long Position</SelectItem>
+                        <SelectItem value="short">Short Position</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Choose which side of the futures contract you want to take.
+                    </p>
+                  </div>
+                )}
 
                 <div>
                   <Label htmlFor="payoffType">Payoff Type</Label>
@@ -434,8 +539,12 @@ export default function CreateOptionPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="Linear">Linear</SelectItem>
-                      <SelectItem value="Quadratic">Quadratic</SelectItem>
-                      <SelectItem value="Logarithmic">Logarithmic</SelectItem>
+                      {contractType === 'option' && (
+                        <>
+                          <SelectItem value="Quadratic">Quadratic</SelectItem>
+                          <SelectItem value="Logarithmic">Logarithmic</SelectItem>
+                        </>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -522,19 +631,36 @@ export default function CreateOptionPage() {
                 />
               </div>
 
-              <div>
-                <Label htmlFor="premium">Premium (amount of MTK tokens)</Label>
-                <Input
-                  id="premium"
-                  name="premium"
-                  type="number"
-                  value={formData.premium}
-                  onChange={handleInputChange}
-                  placeholder="50"
-                  min="0"
-                  required
-                />
-              </div>
+              {contractType === 'option' ? (
+                <div>
+                  <Label htmlFor="premium">Premium (amount of MTK tokens)</Label>
+                  <Input
+                    id="premium"
+                    name="premium"
+                    type="number"
+                    value={formData.premium}
+                    onChange={handleInputChange}
+                    placeholder="50"
+                    min="0"
+                    required={contractType === 'option'}
+                  />
+                </div>
+              ) : (
+                <div>
+                  <Label htmlFor="expirySeconds">Expiry Time (seconds)</Label>
+                  <Input
+                    id="expirySeconds"
+                    type="number"
+                    value={expirySeconds}
+                    onChange={(e) => setExpirySeconds(e.target.value)}
+                    placeholder="300"
+                    min="60"
+                  />
+                  <p className="text-sm text-muted-foreground mt-1">
+                    How long the futures contract will be active after counterparty enters (minimum 60 seconds).
+                  </p>
+                </div>
+              )}
 
               <div>
                 <Label htmlFor="oracle">Oracle Address</Label>
@@ -553,7 +679,9 @@ export default function CreateOptionPage() {
                 disabled={isCreating}
                 className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90"
               >
-                {isCreating ? 'Processing...' : `Create ${optionType === 'call' ? 'Call' : 'Put'} Option (2 Transactions)`}
+{isCreating ? 'Processing...' : contractType === 'future' 
+                  ? 'Create Future Contract (1 Transaction)' 
+                  : `Create ${optionType === 'call' ? 'Call' : 'Put'} Option (2 Transactions)`}
               </Button>
             </form>
           </CardContent>
@@ -577,12 +705,16 @@ export default function CreateOptionPage() {
                 
                 <CardTitle className="text-center text-2xl font-bold bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent animate-gradient bg-[length:200%_auto]">
                   <Sparkles className="inline h-6 w-6 mr-2 text-primary" />
-                  {optionType === 'call' ? 'Call' : 'Put'} Option Contract Created!
+                  {contractType === 'future' 
+                    ? 'Linear Finite Future Contract Created!' 
+                    : `${optionType === 'call' ? 'Call' : 'Put'} Option Contract Created!`}
                   <Sparkles className="inline h-6 w-6 ml-2 text-accent" />
                 </CardTitle>
                 
                 <p className="text-center text-muted-foreground mt-2">
-                  Your option contract has been deployed successfully and is ready for trading.
+                  {contractType === 'future' 
+                    ? 'Your futures contract has been deployed successfully and is ready for counterparty entry.'
+                    : 'Your option contract has been deployed successfully and is ready for trading.'}
                 </p>
               </CardHeader>
               
@@ -651,21 +783,43 @@ export default function CreateOptionPage() {
                     </h3>
                     
                     <div className="space-y-3 text-sm">
-                      <div className="flex items-start gap-3 p-3 bg-primary/5 rounded-lg border border-primary/10">
-                        <div className="w-6 h-6 bg-gradient-to-r from-primary to-accent rounded-full flex items-center justify-center flex-shrink-0 text-primary-foreground text-xs font-bold">1</div>
-                        <div>
-                          <div className="font-medium text-foreground">Fund the Contract</div>
-                          <div className="text-muted-foreground">As the short position holder, provide the underlying tokens to activate the option</div>
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-start gap-3 p-3 bg-accent/5 rounded-lg border border-accent/10">
-                        <div className="w-6 h-6 bg-gradient-to-r from-accent to-primary rounded-full flex items-center justify-center flex-shrink-0 text-accent-foreground text-xs font-bold">2</div>
-                        <div>
-                          <div className="font-medium text-foreground">Share with Buyers</div>
-                          <div className="text-muted-foreground">Others can enter as long position holders to activate trading</div>
-                        </div>
-                      </div>
+                      {contractType === 'future' ? (
+                        <>
+                          <div className="flex items-start gap-3 p-3 bg-primary/5 rounded-lg border border-primary/10">
+                            <div className="w-6 h-6 bg-gradient-to-r from-primary to-accent rounded-full flex items-center justify-center flex-shrink-0 text-primary-foreground text-xs font-bold">1</div>
+                            <div>
+                              <div className="font-medium text-foreground">Wait for Counterparty</div>
+                              <div className="text-muted-foreground">Someone needs to enter the opposite position to activate the futures contract</div>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-start gap-3 p-3 bg-accent/5 rounded-lg border border-accent/10">
+                            <div className="w-6 h-6 bg-gradient-to-r from-accent to-primary rounded-full flex items-center justify-center flex-shrink-0 text-accent-foreground text-xs font-bold">2</div>
+                            <div>
+                              <div className="font-medium text-foreground">Automatic Settlement</div>
+                              <div className="text-muted-foreground">Profits/losses are automatically calculated at expiry based on price movement</div>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-start gap-3 p-3 bg-primary/5 rounded-lg border border-primary/10">
+                            <div className="w-6 h-6 bg-gradient-to-r from-primary to-accent rounded-full flex items-center justify-center flex-shrink-0 text-primary-foreground text-xs font-bold">1</div>
+                            <div>
+                              <div className="font-medium text-foreground">Fund the Contract</div>
+                              <div className="text-muted-foreground">As the short position holder, provide the underlying tokens to activate the option</div>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-start gap-3 p-3 bg-accent/5 rounded-lg border border-accent/10">
+                            <div className="w-6 h-6 bg-gradient-to-r from-accent to-primary rounded-full flex items-center justify-center flex-shrink-0 text-accent-foreground text-xs font-bold">2</div>
+                            <div>
+                              <div className="font-medium text-foreground">Share with Buyers</div>
+                              <div className="text-muted-foreground">Others can enter as long position holders to activate trading</div>
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>

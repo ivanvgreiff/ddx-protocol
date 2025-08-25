@@ -112,6 +112,8 @@ const OptionsBookABI = require('../utils/OptionsBookABI.json');
 const SimuOracleABI = require('../utils/SimuOracleABI.json');
 const MTKABI = require('../utils/MTKContractABI.json');
 const TwoTKABI = require('../utils/TwoTKContractABI.json');
+const FuturesBookABI = require('../utils/FuturesBookABI.json');
+const LinearFiniteFuturesABI = require('../utils/LinearFiniteFuturesABI.json');
 
 // Utility function to add delay
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -164,6 +166,8 @@ async function getContractTypeAndABI(contractAddress) {
 const OPTIONSBOOK_ADDRESS = process.env.OPTIONS_BOOK;
 const CALL_IMPL_ADDRESS = process.env.CALL_OPTION_IMPL;
 const PUT_IMPL_ADDRESS = process.env.PUT_OPTION_IMPL;
+const FUTURESBOOK_ADDRESS = process.env.FUTURES_BOOK;
+const LINEAR_FINITE_FUTURES_ADDRESS = process.env.LINEAR_FINITE_FUTURES;
 
 // Validate that all required addresses are provided
 if (!OPTIONSBOOK_ADDRESS) {
@@ -178,11 +182,21 @@ if (!PUT_IMPL_ADDRESS) {
   console.error('❌ PUT_OPTION_IMPL not found in environment variables');
   process.exit(1);
 }
+if (!FUTURESBOOK_ADDRESS) {
+  console.error('❌ FUTURES_BOOK not found in environment variables');
+  process.exit(1);
+}
+if (!LINEAR_FINITE_FUTURES_ADDRESS) {
+  console.error('❌ LINEAR_FINITE_FUTURES not found in environment variables');
+  process.exit(1);
+}
 
 console.log('✅ Contract addresses loaded from .env:');
 console.log('  OPTIONS_BOOK:', OPTIONSBOOK_ADDRESS);
 console.log('  CALL_OPTION_IMPL:', CALL_IMPL_ADDRESS);
 console.log('  PUT_OPTION_IMPL:', PUT_IMPL_ADDRESS);
+console.log('  FUTURES_BOOK:', FUTURESBOOK_ADDRESS);
+console.log('  LINEAR_FINITE_FUTURES:', LINEAR_FINITE_FUTURES_ADDRESS);
 
 // Query current OptionsBook factory for all actual contracts
 app.get('/api/factory/all-contracts', async (req, res) => {
@@ -1130,6 +1144,481 @@ app.post('/api/option/:contractAddress/reclaim', async (req, res) => {
     console.error('Error details:', error.message);
     res.status(500).json({ 
       error: 'Failed to prepare reclaim transaction',
+      details: error.message 
+    });
+  }
+});
+
+// ==================== FUTURES API ENDPOINTS ====================
+
+// Get all futures contracts from FuturesBook factory
+app.get('/api/factory/all-futures', async (req, res) => {
+  try {
+    if (!provider) {
+      return res.status(500).json({ error: 'Provider not initialized' });
+    }
+    
+    console.log('🔍 Querying FuturesBook at address:', FUTURESBOOK_ADDRESS);
+    const futuresBookContract = new ethers.Contract(FUTURESBOOK_ADDRESS, FuturesBookABI, provider);
+    
+    // Get all futures contracts
+    console.log('📋 Calling getAllFutures()...');
+    const allFutures = await futuresBookContract.getAllFutures();
+    
+    console.log(`✅ Found ${allFutures.length} futures contracts:`, allFutures);
+    
+    if (allFutures.length === 0) {
+      console.log('⚠️ No futures contracts found. This could mean:');
+      console.log('   - No futures have been created yet');
+      console.log('   - FuturesBook address is incorrect');
+      console.log('   - Contract deployment failed');
+      console.log('   - Network mismatch');
+    }
+    
+    // Get metadata for each futures contract
+    const futuresMetadata = await Promise.all(
+      allFutures.map(async (futureAddress) => {
+        try {
+          const meta = await futuresBookContract.getFuturesMeta(futureAddress);
+          
+          // Determine if the future should be considered active/funded based on long position
+          const hasLongPosition = meta.long && meta.long !== '0x0000000000000000000000000000000000000000';
+          const isFunded = true; // FuturesBook ensures funded contracts
+          const isActive = hasLongPosition;
+          
+          // Check if future is expired and should be resolved
+          const currentTime = Math.floor(Date.now() / 1000);
+          const isExpired = meta.expiry > 0 && currentTime > meta.expiry;
+          const needsResolution = isExpired && !meta.isResolved && !meta.isExercised;
+          
+          // Provide resolution status for frontend
+          let resolutionStatus = 'active';
+          if (!isExpired) {
+            resolutionStatus = 'active';
+          } else if (meta.isResolved) {
+            resolutionStatus = 'resolved';
+          } else if (meta.isExercised) {
+            resolutionStatus = 'exercised';
+          } else {
+            resolutionStatus = 'needs_resolution';
+          }
+          
+          return {
+            address: meta.futureAddress,
+            type: 'future',
+            contractType: 'LINEAR_FINITE_FUTURES',
+            payoffType: meta.payoffType || 'LinearFiniteFutures',
+            short: meta.short,
+            long: meta.long,
+            isFunded,
+            isActive,
+            isExercised: meta.isExercised,
+            isResolved: meta.isResolved,
+            needsResolution,
+            resolutionStatus,
+            expiry: meta.expiry.toString(),
+            strikePrice: meta.strikePrice.toString(),
+            optionSize: meta.optionSize.toString(),
+            premium: meta.premium.toString(), // Always 0 for futures
+            priceAtExpiry: meta.priceAtExpiry.toString(),
+            exercisedAmount: meta.exercisedAmount.toString(),
+            underlyingToken: meta.underlyingToken,
+            strikeToken: meta.strikeToken,
+            underlyingSymbol: meta.underlyingSymbol,
+            strikeSymbol: meta.strikeSymbol
+          };
+        } catch (error) {
+          console.error(`Error fetching metadata for future ${futureAddress}:`, error);
+          return null;
+        }
+      })
+    );
+    
+    // Filter out null entries (failed metadata fetches)
+    const validFutures = futuresMetadata.filter(meta => meta !== null);
+    
+    res.json({
+      futuresBookAddress: FUTURESBOOK_ADDRESS,
+      futuresCount: validFutures.length,
+      totalVolume: '0', // Futures don't have volume tracking like options
+      contracts: validFutures
+    });
+  } catch (error) {
+    console.error('Error querying futures contracts:', error);
+    res.status(500).json({ error: 'Failed to query futures contracts' });
+  }
+});
+
+// Get specific futures contract details
+app.get('/api/futures/:contractAddress', async (req, res) => {
+  try {
+    const { contractAddress } = req.params;
+    console.log('🔍 Fetching futures details for:', contractAddress);
+    
+    const futuresBookContract = new ethers.Contract(FUTURESBOOK_ADDRESS, FuturesBookABI, provider);
+    
+    let futuresMeta;
+    try {
+      // Single RPC call to get all futures metadata
+      futuresMeta = await futuresBookContract.getFuturesMeta(contractAddress);
+      console.log('✅ Got futures details in 1 call instead of multiple individual calls');
+    } catch (metaError) {
+      console.error('❌ Failed to get futures metadata from FuturesBook:', metaError.message);
+      return res.status(404).json({ 
+        error: 'Future not found in FuturesBook',
+        details: 'The contract address does not exist in the FuturesBook registry'
+      });
+    }
+    
+    // Handle case where futures metadata might not be available
+    if (!futuresMeta || futuresMeta.futureAddress === '0x0000000000000000000000000000000000000000') {
+      console.warn('⚠️ Futures metadata not found');
+      return res.status(404).json({ 
+        error: 'Future not found',
+        details: 'The contract address does not exist in the FuturesBook registry'
+      });
+    }
+    
+    // Determine active/funded state from metadata
+    const hasLongPosition = futuresMeta.long && futuresMeta.long !== '0x0000000000000000000000000000000000000000';
+    const isFunded = true; // FuturesBook ensures all registered contracts are funded
+    const isActive = hasLongPosition;
+    
+    // Check resolution status
+    const currentTime = Math.floor(Date.now() / 1000);
+    const isExpired = futuresMeta.expiry > 0 && currentTime > futuresMeta.expiry;
+    const needsResolution = isExpired && !futuresMeta.isResolved && !futuresMeta.isExercised;
+    
+    let resolutionStatus = 'active';
+    if (!isExpired) {
+      resolutionStatus = 'active';
+    } else if (futuresMeta.isResolved) {
+      resolutionStatus = 'resolved';
+    } else if (futuresMeta.isExercised) {
+      resolutionStatus = 'exercised';
+    } else {
+      resolutionStatus = 'needs_resolution';
+    }
+    
+    res.json({
+      contractAddress: futuresMeta.futureAddress,
+      short: futuresMeta.short,
+      long: futuresMeta.long,
+      underlyingToken: futuresMeta.underlyingToken,
+      strikeToken: futuresMeta.strikeToken,
+      underlyingSymbol: futuresMeta.underlyingSymbol,
+      strikeSymbol: futuresMeta.strikeSymbol,
+      strikePrice: futuresMeta.strikePrice.toString(),
+      optionSize: futuresMeta.optionSize.toString(),
+      premium: futuresMeta.premium.toString(), // Always 0 for futures
+      expiry: futuresMeta.expiry.toString(),
+      isActive,
+      isExercised: futuresMeta.isExercised,
+      isFunded,
+      oracle: futuresMeta.underlyingToken, // Fallback
+      futuresBook: FUTURESBOOK_ADDRESS,
+      priceAtExpiry: futuresMeta.priceAtExpiry.toString(),
+      isResolved: futuresMeta.isResolved,
+      needsResolution,
+      resolutionStatus,
+      contractType: 'LINEAR_FINITE_FUTURES',
+      payoffType: futuresMeta.payoffType || 'LinearFiniteFutures'
+    });
+  } catch (error) {
+    console.error('❌ Error fetching futures details:', error);
+    res.status(500).json({ 
+      error: 'Failed to get futures contract details',
+      details: error.message 
+    });
+  }
+});
+
+// Create linear finite futures using FuturesBook factory
+app.post('/api/futures/create-future', async (req, res) => {
+  try {
+    if (!provider) {
+      return res.status(500).json({ 
+        error: 'Blockchain provider not initialized',
+        details: 'The server could not connect to the blockchain network'
+      });
+    }
+
+    const {
+      underlyingToken,
+      strikeToken,
+      underlyingSymbol,
+      strikeSymbol,
+      strikePrice, // Used to calculate strikeNotional
+      optionSize,
+      premium, // Must be 0 for futures
+      oracle,
+      userAddress,
+      payoffType,
+      makerSide, // 'long' or 'short' - which side maker wants to be
+      makerCollateral, // Now used as strikeNotional or ignored for SHORT
+      expirySeconds // New: maker-chosen expiry time
+    } = req.body;
+    
+    if (!underlyingToken || !strikeToken || !oracle || !userAddress) {
+      return res.status(400).json({ 
+        error: 'Missing required contract addresses or user address' 
+      });
+    }
+    
+    // Futures must have 0 premium
+    if (premium && premium !== '0' && premium !== 0) {
+      return res.status(400).json({ 
+        error: 'Futures contracts must have zero premium' 
+      });
+    }
+    
+    const optionSizeWei = ethers.parseUnits(optionSize.toString(), 18);
+    const makerIsLong = makerSide === 'long';
+    const expirySecondsValue = expirySeconds || 300; // Default 5 minutes if not provided
+    
+    // Calculate strikeNotional based on maker side and user input
+    let strikeNotional = 0n;
+    let fundingToken = '';
+    let fundingAmount = 0n;
+    
+    if (makerIsLong) {
+      // LONG maker funds with strike tokens (strikeNotional = strikePrice * optionSize)
+      strikeNotional = ethers.parseUnits((parseFloat(strikePrice) * parseFloat(optionSize)).toString(), 18);
+      fundingToken = strikeToken;
+      fundingAmount = strikeNotional;
+    } else {
+      // SHORT maker funds with underlying tokens (optionSize)
+      // strikeNotional is still used to calculate strike price
+      strikeNotional = ethers.parseUnits((parseFloat(strikePrice) * parseFloat(optionSize)).toString(), 18);
+      fundingToken = underlyingToken;
+      fundingAmount = optionSizeWei;
+    }
+    
+    // Create FuturesBook contract instance
+    const futuresBookContract = new ethers.Contract(FUTURESBOOK_ADDRESS, FuturesBookABI, provider);
+    
+    // Prepare approval transaction for funding
+    const tokenContract = new ethers.Contract(fundingToken, MTKABI, provider);
+    const approveData = tokenContract.interface.encodeFunctionData('approve', [FUTURESBOOK_ADDRESS, fundingAmount]);
+    
+    const approveTransaction = {
+      to: fundingToken,
+      data: approveData,
+      value: '0x0'
+    };
+    
+    // Prepare createAndFundLinearFuture transaction data with new signature
+    const createData = futuresBookContract.interface.encodeFunctionData('createAndFundLinearFuture', [
+      underlyingToken,
+      strikeToken,
+      underlyingSymbol,
+      strikeSymbol,
+      optionSizeWei,
+      0, // premium must be 0 for futures
+      oracle,
+      strikeNotional,
+      makerIsLong,
+      expirySecondsValue
+    ]);
+    
+    const responseData = {
+      success: true,
+      message: 'Futures contract transactions prepared for MetaMask signing (approval + creation)',
+      data: {
+        createTransaction: {
+          to: FUTURESBOOK_ADDRESS,
+          data: createData,
+          value: '0x0'
+        },
+        approveTransaction: approveTransaction,
+        tokenToApprove: fundingToken,
+        amountToApprove: fundingAmount.toString(),
+        futuresBookAddress: FUTURESBOOK_ADDRESS,
+        fundingDetails: {
+          makerSide: makerSide,
+          fundingToken: fundingToken,
+          fundingAmount: ethers.formatUnits(fundingAmount, 18),
+          strikeNotional: ethers.formatUnits(strikeNotional, 18),
+          calculatedStrike: parseFloat(strikePrice).toString()
+        }
+      }
+    };
+    
+    res.json(responseData);
+  } catch (error) {
+    console.error('Error creating futures contract:', error);
+    res.status(500).json({ 
+      error: 'Failed to create futures contract',
+      details: error.message 
+    });
+  }
+});
+
+// Enter as counterparty (no collateral needed for futures)
+app.post('/api/futures/:contractAddress/enter', async (req, res) => {
+  try {
+    const { contractAddress } = req.params;
+    
+    // Validate contract address format
+    if (!contractAddress || !ethers.isAddress(contractAddress)) {
+      return res.status(400).json({ 
+        error: 'Invalid contract address format',
+        address: contractAddress 
+      });
+    }
+    
+    console.log('Processing futures enter request for contract:', contractAddress);
+    
+    // Get futures metadata from FuturesBook
+    const futuresBookContract = new ethers.Contract(FUTURESBOOK_ADDRESS, FuturesBookABI, provider);
+    const futuresMeta = await futuresBookContract.getFuturesMeta(contractAddress);
+    
+    console.log('Futures metadata:', {
+      underlyingSymbol: futuresMeta.underlyingSymbol,
+      strikeSymbol: futuresMeta.strikeSymbol,
+      optionSize: ethers.formatUnits(futuresMeta.optionSize, 18),
+      strikePrice: ethers.formatUnits(futuresMeta.strikePrice, 18),
+      expiry: futuresMeta.expiry.toString(),
+      long: futuresMeta.long,
+      short: futuresMeta.short
+    });
+    
+    // For futures, no collateral is needed - counterparty just enters without paying anything
+    // The premium amount must be 0 for futures contracts
+    
+    // Prepare enterAndPayPremium transaction data with premium amount (must be 0 for futures)
+    const enterData = futuresBookContract.interface.encodeFunctionData('enterAndPayPremium', [contractAddress, 0]);
+    
+    const responseData = {
+      success: true,
+      message: 'Enter futures contract transaction prepared for MetaMask signing',
+      data: {
+        enterTransaction: {
+          to: FUTURESBOOK_ADDRESS,
+          data: enterData,
+          value: '0x0'
+        },
+        futuresBookAddress: FUTURESBOOK_ADDRESS,
+        contractDetails: {
+          underlyingSymbol: futuresMeta.underlyingSymbol,
+          strikeSymbol: futuresMeta.strikeSymbol,
+          optionSize: ethers.formatUnits(futuresMeta.optionSize, 18),
+          strikePrice: ethers.formatUnits(futuresMeta.strikePrice, 18),
+          expiry: futuresMeta.expiry.toString()
+        }
+      }
+    };
+    
+    res.json(responseData);
+  } catch (error) {
+    console.error('Error preparing futures enter transaction:', error);
+    console.error('Error details:', error.message);
+    res.status(500).json({ 
+      error: 'Failed to prepare futures enter transaction',
+      details: error.message 
+    });
+  }
+});
+
+// Resolve and exercise futures contract
+app.post('/api/futures/:contractAddress/resolveAndExercise', async (req, res) => {
+  try {
+    const { contractAddress } = req.params;
+    
+    console.log('Processing futures resolveAndExercise request for contract:', contractAddress);
+    
+    // Get futures metadata from FuturesBook
+    const futuresBookContract = new ethers.Contract(FUTURESBOOK_ADDRESS, FuturesBookABI, provider);
+    const futuresMeta = await futuresBookContract.getFuturesMeta(contractAddress);
+    
+    const currentTime = Math.floor(Date.now() / 1000);
+    
+    console.log('Futures state check:', {
+      contractAddress,
+      long: futuresMeta.long,
+      isExercised: futuresMeta.isExercised,
+      isResolved: futuresMeta.isResolved,
+      expiry: futuresMeta.expiry.toString(),
+      strikePrice: futuresMeta.strikePrice.toString(),
+      priceAtExpiry: futuresMeta.priceAtExpiry.toString(),
+      currentTime,
+      isExpired: Number(futuresMeta.expiry) <= currentTime
+    });
+    
+    // For futures, the payout is calculated automatically by the contract
+    // No token approval needed as the contract calculates and transfers the payout
+    
+    // Prepare resolveAndExercise transaction (call FuturesBook)
+    const resolveAndExerciseData = futuresBookContract.interface.encodeFunctionData('resolveAndExercise', [contractAddress]);
+    
+    res.json({
+      success: true,
+      message: 'Futures resolve and exercise transaction prepared for MetaMask signing',
+      data: {
+        resolveAndExerciseTransaction: {
+          to: FUTURESBOOK_ADDRESS,
+          data: resolveAndExerciseData,
+          value: '0x0'
+        },
+        contractAddress: contractAddress
+      }
+    });
+  } catch (error) {
+    console.error('Error preparing futures resolveAndExercise transaction:', error);
+    res.status(500).json({ 
+      error: 'Failed to prepare futures resolveAndExercise transaction',
+      details: error.message 
+    });
+  }
+});
+
+// Resolve and reclaim futures contract
+app.post('/api/futures/:contractAddress/reclaim', async (req, res) => {
+  try {
+    const { contractAddress } = req.params;
+    
+    console.log('Processing futures reclaim request for contract:', contractAddress);
+    
+    // Validate contract address format
+    if (!contractAddress || !ethers.isAddress(contractAddress)) {
+      return res.status(400).json({ 
+        error: 'Invalid contract address format',
+        address: contractAddress 
+      });
+    }
+    
+    // Get futures metadata from FuturesBook
+    const futuresBookContract = new ethers.Contract(FUTURESBOOK_ADDRESS, FuturesBookABI, provider);
+    const futuresMeta = await futuresBookContract.getFuturesMeta(contractAddress);
+    
+    const currentTime = Math.floor(Date.now() / 1000);
+    
+    console.log('Futures state check for reclaim:', {
+      contractAddress,
+      short: futuresMeta.short,
+      isExercised: futuresMeta.isExercised,
+      isResolved: futuresMeta.isResolved,
+      expiry: futuresMeta.expiry.toString(),
+      currentTime,
+      isExpired: Number(futuresMeta.expiry) <= currentTime
+    });
+    
+    // Prepare resolveAndReclaim transaction data
+    const reclaimData = futuresBookContract.interface.encodeFunctionData('resolveAndReclaim', [contractAddress]);
+    
+    res.json({
+      success: true,
+      message: 'Futures reclaim transaction prepared for MetaMask signing',
+      data: {
+        to: FUTURESBOOK_ADDRESS,
+        data: reclaimData,
+        value: '0x0'
+      }
+    });
+  } catch (error) {
+    console.error('Error preparing futures reclaim transaction:', error);
+    res.status(500).json({ 
+      error: 'Failed to prepare futures reclaim transaction',
       details: error.message 
     });
   }
