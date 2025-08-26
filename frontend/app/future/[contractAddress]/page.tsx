@@ -230,7 +230,13 @@ export default function FutureDetailPage() {
         <div className="text-center mb-16">
           <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-5xl mb-4">
             <span className="bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent animate-gradient">
-              Linear Future
+              {(() => {
+                const contractType = futureData?.contractType || futureData?.payoffType || futureData?.optionType || 'LinearFiniteFutures'
+                if (contractType.toLowerCase().includes('power')) {
+                  return 'Power Future'
+                }
+                return 'Linear Future'
+              })()}
             </span>
             <br />
             Contract Details
@@ -287,7 +293,13 @@ export default function FutureDetailPage() {
                 <Target className="h-6 w-6 text-accent" />
               </div>
               <div className="text-2xl font-bold mb-2">
-                {futureData.strikePrice ? formatTokenAmount(futureData.strikePrice, futureData.strikeSymbol || 'MTK') : 'Set on activation'}
+                {(() => {
+                  // Strike price is now set during funding, not activation
+                  if (futureData.strikePrice && futureData.strikePrice !== '0') {
+                    return formatTokenAmount(futureData.strikePrice, futureData.strikeSymbol || 'MTK')
+                  }
+                  return futureData.isFunded ? 'Set during funding' : 'Not funded yet'
+                })()}
               </div>
               <div className="text-sm text-muted-foreground">Strike Price</div>
             </CardContent>
@@ -385,6 +397,19 @@ export default function FutureDetailPage() {
                     })()}
                   </div>
                 </div>
+                {/* Show power for Power Futures */}
+                {(() => {
+                  const contractType = futureData.contractType || futureData.payoffType || futureData.optionType || 'LinearFiniteFutures'
+                  if (contractType.toLowerCase().includes('power')) {
+                    return (
+                      <div className="p-3 bg-muted/50 rounded-lg">
+                        <div className="text-sm text-muted-foreground mb-1">Power</div>
+                        <div className="text-sm font-medium">{futureData.payoffPower || 2}</div>
+                      </div>
+                    )
+                  }
+                  return null
+                })()}
                 <div className="p-3 bg-muted/50 rounded-lg">
                   <div className="text-sm text-muted-foreground mb-1">Price of {futureData.underlyingSymbol || '2TK'} at Expiry</div>
                   <div className="text-sm font-medium">
@@ -437,7 +462,14 @@ export default function FutureDetailPage() {
           <CardContent>
             <OptionPayoffChart
               optionType="CALL"
-              payoffType="Linear"
+              payoffType={(() => {
+                const contractType = futureData.contractType || futureData.payoffType || futureData.optionType || 'LinearFiniteFutures'
+                if (contractType.toLowerCase().includes('power')) {
+                  return 'Power'
+                }
+                return 'Linear'
+              })()}
+              payoffPower={futureData.payoffPower || 2}
               strikePrice={futureData.strikePrice || "1000000000000000000"}
               optionSize={futureData.optionSize}
               strikeSymbol={futureData.strikeSymbol || 'MTK'}

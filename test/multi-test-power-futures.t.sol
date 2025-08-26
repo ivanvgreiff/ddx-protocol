@@ -23,7 +23,7 @@ contract PowerFuturesTest is Test {
     address public taker = address(0x2);
 
     // Common knobs
-    uint256 constant SIZE = 100e18;              // optionSize = 100 units of underlying
+    uint256 constant SIZE = 100e18;              // positionSize = 100 units of underlying
     uint256 constant EXPIRY_SECONDS = 5 minutes; // maker-chosen expiry
     uint8   constant POWER = 2;                  // test a quadratic payoff
 
@@ -43,7 +43,7 @@ contract PowerFuturesTest is Test {
         oracle.setPrice(address(twoTK), "2TK", 2);
         oracle.setPrice(address(mtk),   "MTK", 1);
 
-        // Deploy impls & book (note the constructor takes both impls)
+        // Deploy impls & book (constructor takes both impls)
         linearImpl  = new LinearFiniteFutures();
         powerImpl   = new PowerFiniteFutures();
         futuresBook = new FuturesBook(address(linearImpl), address(powerImpl));
@@ -53,7 +53,7 @@ contract PowerFuturesTest is Test {
         assertEq(futuresBook.powerFuturesImpl(), address(powerImpl), "book power impl mismatch");
     }
 
-    // ======================== MATRIX (exercise) ========================
+    // ======================== POWER: EXERCISE MATRIX ========================
 
     function testPowerFutures_Exercise_Matrix() public {
         bool[2] memory makerIsLongArray = [true, false];
@@ -78,10 +78,11 @@ contract PowerFuturesTest is Test {
 
     // Sanity check for different powers
     function testPowerFutures_Exercise_Cubic() public {
-        _runExerciseScenarioPower(true, 1e18, 3e18, 3); // |3-1|^3 = 8, size=100 → payout = 800
+        // |3-1|^3 = 8, size=100 → payout = 800
+        _runExerciseScenarioPower(true, 1e18, 3e18, 3);
     }
 
-    // ======================== RECLAIM (no exercise) ========================
+    // ======================== POWER: RECLAIM (no exercise) ========================
 
     function testPowerFutures_Reclaim_LongMaker() public {
         _runReclaimScenarioPower({makerIsLong: true,  desiredStrike: 2e18, power: POWER});
@@ -91,7 +92,20 @@ contract PowerFuturesTest is Test {
         _runReclaimScenarioPower({makerIsLong: false, desiredStrike: 4e18, power: POWER});
     }
 
-    // ======================== INTERNAL HELPERS ========================
+    // ======================== LINEAR: PAYOFF CHECKS ========================
+
+    function testLinearFutures_Exercise_Basics() public {
+        // Long-maker, strike 2, resolve 5 → payout = (5-2)*100 = 300
+        _runExerciseScenarioLinear(true, 2e18, 5e18);
+
+        // Short-maker, strike 4, resolve 1 → payout = (4-1)*100 = 300 (to short)
+        _runExerciseScenarioLinear(false, 4e18, 1e18);
+
+        // Tie
+        _runExerciseScenarioLinear(true, 2e18, 2e18);
+    }
+
+    // ======================== INTERNAL HELPERS (POWER) ========================
 
     function _runExerciseScenarioPower(
         bool makerIsLong,
@@ -121,27 +135,22 @@ contract PowerFuturesTest is Test {
             address(mtk),
             "2TK",
             "MTK",
-            SIZE,            // _optionSize
-            0,               // _premiumMustBe0
-            address(oracle), // _oracle
-            strikeNotional,  // _strikeNotional
-            makerIsLong,     // _makerIsLong
-            EXPIRY_SECONDS,  // _expirySeconds
-            power            // _power
+            SIZE,            // positionSize
+            0,               // premiumMustBe0
+            address(oracle), // oracle
+            strikeNotional,  // strikeNotional
+            makerIsLong,     // makerIsLong
+            EXPIRY_SECONDS,  // expirySeconds
+            power            // payoff power
         );
 
         PowerFiniteFutures inst = PowerFiniteFutures(fut);
 
         // --- Instance wiring checks BEFORE activation ---
-        assertEq(inst.optionsBook(), address(futuresBook), "instance.optionsBook not set to book");
+        assertEq(inst.futuresBook(), address(futuresBook), "instance.futuresBook not set to book");
         assertTrue(inst.isFunded(), "instance should be funded");
         assertFalse(inst.isActive(), "instance should not be active yet");
-
-        // Must be the POWER instance, not linear
-        string memory optType = inst.optionType();
-        assertEq(keccak256(bytes(optType)), keccak256(bytes("POWER_FINITE_FUTURES")), "wrong instance type");
-
-        // Power should be set as requested
+        assertEq(keccak256(bytes(inst.futureType())), keccak256(bytes("POWER_FINITE_FUTURES")), "wrong instance type");
         assertEq(inst.payoffPower(), power, "payoffPower not set on instance");
 
         // Strike must be fixed from funding
@@ -168,9 +177,13 @@ contract PowerFuturesTest is Test {
         address finalShort = inst.short();
         assertTrue(finalLong != address(0) && finalShort != address(0), "roles not assigned");
 
+        // Refund amount (maker funds strike if makerIsLong)
+        bool refundToLong = makerIsLong && (finalLong == maker);
+        uint256 refundAmount = refundToLong ? strikeNotional : 0;
+
         // Set expiry price and jump past expiry
         vm.warp(block.timestamp + EXPIRY_SECONDS + 1);
-        // SimuOracle expects integer ratios; resolvedPrice is 1e18 scaled → divide by 1e18
+        // SimuOracle expects integer prices; resolvedPrice is 1e18 scaled → divide by 1e18
         oracle.setPrice(address(twoTK), "2TK", resolvedPrice / 1e18);
 
         // Both parties approve the book to pull strike for settlement
@@ -201,36 +214,26 @@ contract PowerFuturesTest is Test {
         uint256 poweredDiff = _pow1e18(diff, power); // 1e18
         uint256 expectedPayout = (poweredDiff * SIZE) / 1e18;
 
-        // Emit handy debug numbers (visible only on failure)
-        emit log_named_uint("resolvedPrice", resolvedPrice);
-        emit log_named_uint("entryStrike", entryStrike);
-        emit log_named_uint("diff", diff);
-        emit log_named_uint("poweredDiff", poweredDiff);
-        emit log_named_uint("expectedPayout", expectedPayout);
-        emit log_named_uint("longDelta", longAfter - longBefore);
-        emit log_named_uint("shortDeltaAbs", shortBefore - shortAfter);
+        // Use signed deltas so we can compare directly, accounting for refund
+        int256 longDelta  = int256(longAfter)  - int256(longBefore);
+        int256 shortDelta = int256(shortAfter) - int256(shortBefore);
 
-        // Long wins if price >= strike; else short wins
-        bool longWins = resolvedPrice >= entryStrike;
-        if (expectedPayout == 0) {
-            assertEq(longAfter - longBefore, 0, "no payout expected");
-            assertEq(shortBefore - shortAfter, 0, "no payout expected");
-        } else if (longWins) {
-            assertEq(longAfter - longBefore, expectedPayout, "long should gain payout");
-            assertEq(shortBefore - shortAfter, expectedPayout, "short should pay payout");
-        } else {
-            assertEq(shortAfter - shortBefore, expectedPayout, "short should gain payout");
-            assertEq(longBefore - longAfter, expectedPayout, "long should pay payout");
-        }
+        bool longWins = resolvedPrice > entryStrike;
+        int256 expectedLongDelta  = (longWins ? int256(expectedPayout) : -int256(expectedPayout)) + int256(refundAmount);
+        int256 expectedShortDelta = (longWins ? -int256(expectedPayout) :  int256(expectedPayout));
 
-        // Zero-sum between the two parties in strike token
+        // Assertions (net deltas)
+        assertEq(longDelta,  expectedLongDelta,  "LONG net delta mismatch");
+        assertEq(shortDelta, expectedShortDelta, "SHORT net delta mismatch");
+
+        // Conservation between LONG & SHORT: total changes by refundAmount (refund comes from the instance)
         assertEq(
             longAfter + shortAfter,
-            longBefore + shortBefore,
-            "MTK not conserved between LONG and SHORT"
+            longBefore + shortBefore + refundAmount,
+            "MTK conservation between LONG and SHORT (+refund) failed"
         );
 
-        // Maker's funded asset must be refunded on exercise (nothing trapped)
+        // Maker's funded asset must be refunded on exercise (nothing trapped in instance)
         if (makerIsLong) {
             assertEq(mtk.balanceOf(fut), 0, "strike funding should be refunded");
         } else {
@@ -275,11 +278,11 @@ contract PowerFuturesTest is Test {
         PowerFiniteFutures inst = PowerFiniteFutures(fut);
 
         // Instance wiring checks BEFORE activation
-        assertEq(inst.optionsBook(), address(futuresBook), "instance.optionsBook not set to book");
+        assertEq(inst.futuresBook(), address(futuresBook), "instance.futuresBook not set to book");
         assertTrue(inst.isFunded(), "instance should be funded");
         assertEq(inst.payoffPower(), power, "payoffPower not set on instance");
         assertEq(inst.strikePrice(), desiredStrike, "strike should equal desiredStrike");
-        assertEq(keccak256(bytes(inst.optionType())), keccak256(bytes("POWER_FINITE_FUTURES")), "wrong instance type");
+        assertEq(keccak256(bytes(inst.futureType())), keccak256(bytes("POWER_FINITE_FUTURES")), "wrong instance type");
 
         // Book metadata must reflect power + strike now
         FuturesBook.FuturesMeta memory metaBefore = futuresBook.getFuturesMeta(fut);
@@ -300,7 +303,7 @@ contract PowerFuturesTest is Test {
         // Jump past expiry (no resolve/exercise)
         vm.warp(block.timestamp + EXPIRY_SECONDS + 1);
 
-        // Short (maker or taker depending on side) reclaims
+        // Short (current short) reclaims
         vm.prank(finalShort);
         futuresBook.resolveAndReclaim(fut);
 
@@ -324,6 +327,111 @@ contract PowerFuturesTest is Test {
             z = (z * x) / 1e18;
         }
         return z;
+    }
+
+    // ======================== INTERNAL HELPERS (LINEAR) ========================
+
+    function _runExerciseScenarioLinear(
+        bool makerIsLong,
+        uint256 desiredStrike,   // 1e18
+        uint256 resolvedPrice    // 1e18
+    ) internal {
+        uint256 strikeNotional = (desiredStrike * SIZE) / 1e18;
+
+        // Maker funding approvals
+        if (makerIsLong) {
+            vm.startPrank(maker);
+            mtk.approve(address(futuresBook), strikeNotional);
+            vm.stopPrank();
+        } else {
+            vm.startPrank(maker);
+            twoTK.approve(address(futuresBook), SIZE);
+            vm.stopPrank();
+        }
+
+        // Create as maker (linear path)
+        vm.prank(maker);
+        address fut = futuresBook.createAndFundLinearFuture(
+            address(twoTK),
+            address(mtk),
+            "2TK",
+            "MTK",
+            SIZE,
+            0,
+            address(oracle),
+            strikeNotional,
+            makerIsLong,
+            EXPIRY_SECONDS
+        );
+
+        LinearFiniteFutures inst = LinearFiniteFutures(fut);
+
+        // Pre-activation sanity
+        assertEq(inst.futuresBook(), address(futuresBook), "instance.futuresBook not set to book");
+        assertTrue(inst.isFunded(), "instance should be funded");
+        assertFalse(inst.isActive(), "instance should not be active yet");
+        assertEq(keccak256(bytes(inst.futureType())), keccak256(bytes("LINEAR_FINITE_FUTURES")), "wrong instance type");
+
+        // Strike must be fixed from funding
+        uint256 entryStrike = inst.strikePrice();
+        assertEq(entryStrike, desiredStrike, "strike should equal desiredStrike");
+
+        // Enter as taker
+        vm.prank(taker);
+        futuresBook.enterAndPayPremium(fut, 0);
+
+        // Roles
+        address finalLong  = inst.long();
+        address finalShort = inst.short();
+
+        // Refund amount if maker was long (funded in strike)
+        bool refundToLong = makerIsLong && (finalLong == maker);
+        uint256 refundAmount = refundToLong ? strikeNotional : 0;
+
+        // Move time and set oracle price
+        vm.warp(block.timestamp + EXPIRY_SECONDS + 1);
+        oracle.setPrice(address(twoTK), "2TK", resolvedPrice / 1e18);
+
+        // Approvals for settlement
+        vm.startPrank(maker);
+        mtk.approve(address(futuresBook), type(uint256).max);
+        vm.stopPrank();
+        vm.startPrank(taker);
+        mtk.approve(address(futuresBook), type(uint256).max);
+        vm.stopPrank();
+
+        // Snapshot balances
+        uint256 longBefore  = mtk.balanceOf(finalLong);
+        uint256 shortBefore = mtk.balanceOf(finalShort);
+
+        // Exercise (as long)
+        vm.prank(finalLong);
+        futuresBook.resolveAndExercise(fut, 0);
+
+        // Post balances
+        uint256 longAfter  = mtk.balanceOf(finalLong);
+        uint256 shortAfter = mtk.balanceOf(finalShort);
+
+        // Expected linear payout
+        uint256 diff = resolvedPrice > entryStrike ? (resolvedPrice - entryStrike) : (entryStrike - resolvedPrice); // 1e18
+        uint256 expectedPayout = (diff * SIZE) / 1e18;
+
+        int256 longDelta  = int256(longAfter)  - int256(longBefore);
+        int256 shortDelta = int256(shortAfter) - int256(shortBefore);
+
+        bool longWins = resolvedPrice > entryStrike;
+        int256 expectedLongDelta  = (longWins ? int256(expectedPayout) : -int256(expectedPayout)) + int256(refundAmount);
+        int256 expectedShortDelta = (longWins ? -int256(expectedPayout) :  int256(expectedPayout));
+
+        assertEq(longDelta,  expectedLongDelta,  "Linear: LONG net delta mismatch");
+        assertEq(shortDelta, expectedShortDelta, "Linear: SHORT net delta mismatch");
+
+        // No tokens trapped
+        if (makerIsLong) {
+            assertEq(mtk.balanceOf(fut), 0, "Linear: strike funding should be refunded");
+        } else {
+            assertEq(twoTK.balanceOf(fut), 0, "Linear: underlying funding should be refunded");
+        }
     }
 }
 

@@ -82,6 +82,7 @@ export default function CreateOptionPage() {
   const [contractType, setContractType] = useState('option') // 'option' or 'future'
   const [optionType, setOptionType] = useState('call')
   const [payoffType, setPayoffType] = useState('Linear')
+  const [payoffPower, setPayoffPower] = useState('2') // For power payoffs
   const [makerSide, setMakerSide] = useState('short') // 'long' or 'short' - only for futures
   const [expirySeconds, setExpirySeconds] = useState('300') // Default 5 minutes for futures
   const [isCreating, setIsCreating] = useState(false)
@@ -145,6 +146,7 @@ export default function CreateOptionPage() {
         ...formData,
         userAddress: account,
         payoffType: payoffType,
+        payoffPower: payoffPower,
         ...(contractType === 'future' && {
           makerSide: makerSide,
           expirySeconds: expirySeconds || '300'
@@ -318,6 +320,7 @@ export default function CreateOptionPage() {
                     contractAddress: contractAddress,
                     contractType: 'future',
                     payoffType: payoffType,
+                    payoffPower: payoffPower,
                     makerSide: makerSide,
                     shortAddress: account,
                     underlyingToken: formData.underlyingToken,
@@ -366,7 +369,7 @@ export default function CreateOptionPage() {
           }
           
           toast.success(contractType === 'future' 
-            ? `Linear finite future contract deployed at: ${contractAddress}`
+            ? `${payoffType} finite future contract deployed at: ${contractAddress}`
             : `${optionType === 'call' ? 'Call' : 'Put'} option contract deployed at: ${contractAddress}`)
           console.log('Deploy transaction hash:', deployTxHash)
           console.log('Contract address:', contractAddress)
@@ -445,7 +448,7 @@ export default function CreateOptionPage() {
       <main className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-3xl font-bold text-center mb-8 flex items-center justify-center">
           <Plus className="h-8 w-8 mr-2" />
-          {contractType === 'future' ? 'Create New Future' : `Create New ${payoffType} ${optionType === 'call' ? 'Call' : 'Put'} Option`}
+          {contractType === 'future' ? `Create New ${payoffType} Future` : `Create New ${payoffType} ${optionType === 'call' ? 'Call' : 'Put'} Option`}
         </h1>
 
         <Alert className="mb-8">
@@ -540,16 +543,38 @@ export default function CreateOptionPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="Linear">Linear</SelectItem>
-                      {contractType === 'option' && (
+                      {contractType === 'option' ? (
                         <>
                           <SelectItem value="Quadratic">Quadratic</SelectItem>
                           <SelectItem value="Logarithmic">Logarithmic</SelectItem>
                         </>
+                      ) : (
+                        <SelectItem value="Power">Power</SelectItem>
                       )}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
+
+              {/* Power input for Power futures */}
+              {contractType === 'future' && payoffType === 'Power' && (
+                <div>
+                  <Label htmlFor="payoffPower">Payoff Power</Label>
+                  <Input
+                    id="payoffPower"
+                    type="number"
+                    value={payoffPower}
+                    onChange={(e) => setPayoffPower(e.target.value)}
+                    placeholder="2"
+                    min="1"
+                    max="100"
+                    required
+                  />
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Power for the payoff function (1-100). Higher powers create more curved payoffs.
+                  </p>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>

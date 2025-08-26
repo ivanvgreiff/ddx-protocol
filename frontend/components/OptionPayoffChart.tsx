@@ -20,7 +20,7 @@ import {
  */
 
 export type OptionType = "CALL" | "PUT";
-export type PayoffType = "Linear" | "Quadratic" | "Logarithmic";
+export type PayoffType = "Linear" | "Quadratic" | "Logarithmic" | "Power";
 
 export type OptionPayoffChartProps = {
   optionType: OptionType;
@@ -51,6 +51,8 @@ export type OptionPayoffChartProps = {
   isNonUserContract?: boolean;
   /** For futures contracts - changes diagonal line behavior */
   isFuturesContract?: boolean;
+  /** Power for Power payoff type (default 2) */
+  payoffPower?: number;
 };
 
 const NEON_GREEN = "#39FF14"; // neon green payoff line for long positions
@@ -92,7 +94,8 @@ function payoff(
   payoffType: PayoffType,
   optionType: OptionType,
   spotPrice: number,
-  K: number
+  K: number,
+  power: number = 2
 ): number {
   switch (payoffType) {
     case "Linear":
@@ -101,6 +104,9 @@ function payoff(
     case "Quadratic":
       const d2 = optionType === "CALL" ? Math.max(0, spotPrice - K) : Math.max(0, K - spotPrice);
       return d2 * d2;
+    case "Power":
+      const diff = Math.abs(spotPrice - K);
+      return Math.pow(diff, power);
     case "Logarithmic":
       if (optionType === "CALL") {
         // Logarithmic Call Beta Variant: P = S * log(I(x-K + 1/I)) if x >= K, else 0
@@ -160,6 +166,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
     isShortPosition = false,
     isNonUserContract = false,
     isFuturesContract = false,
+    payoffPower = 2,
   } = props;
 
   const K = fromUnits(strikePrice, decimals) ?? 0;
@@ -193,10 +200,42 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
     for (let i = 0; i < pts; i++) {
       const t = i / (pts - 1);
       const S = minX + t * span;
-      let value = payoff(payoffType, optionType, S, K) * size; // Total payoff (not normalized)
+      let value;
+      if (isFuturesContract) {
+        // For futures contracts: use futures payoff logic
+        if (payoffType === 'Power') {
+          // Power Futures: Asymmetric directional payoffs
+          if (isShortPosition) {
+            // Short perspective: win when S < K, lose when S > K
+            if (S < K) {
+              value = Math.pow(K - S, payoffPower) * size; // Profit when price goes down
+            } else if (S > K) {
+              value = -Math.pow(S - K, payoffPower) * size; // Loss when price goes up
+            } else {
+              value = 0; // No change at strike
+            }
+          } else {
+            // Long perspective: win when S > K, lose when S < K  
+            if (S > K) {
+              value = Math.pow(S - K, payoffPower) * size; // Profit when price goes up
+            } else if (S < K) {
+              value = -Math.pow(K - S, payoffPower) * size; // Loss when price goes down
+            } else {
+              value = 0; // No change at strike
+            }
+          }
+        } else {
+          // Linear futures: y = (S - K) * size
+          value = (S - K) * size;
+        }
+      } else {
+        // For options contracts: use option payoff logic
+        value = payoff(payoffType, optionType, S, K, payoffPower) * size; // Total payoff (not normalized)
+      }
       
       // For short positions, invert the payoff to show the seller's perspective
-      if (isShortPosition) {
+      // (Skip this for Power futures as they handle position perspective internally)
+      if (isShortPosition && !(isFuturesContract && payoffType === 'Power')) {
         value = -value;
       }
       
@@ -225,7 +264,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
       }
     }
     return out;
-  }, [minX, maxX, payoffType, optionType, K, resolution, size, isShortPosition, isFuturesContract]);
+  }, [minX, maxX, payoffType, optionType, K, resolution, size, isShortPosition, isFuturesContract, payoffPower]);
 
   const [yMin, yMax] = useMemo(() => {
     // Determine reasonable Y bounds for nice padding, handling negative values for short positions

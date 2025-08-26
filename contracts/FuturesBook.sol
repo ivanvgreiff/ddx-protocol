@@ -29,7 +29,7 @@ contract FuturesBook {
         string strikeSymbol;
 
         uint256 strikePrice;   // fixed strike determined from funding
-        uint256 optionSize;    // quantity (1e18 units)
+        uint256 positionSize;  // quantity (1e18 units)
         uint256 premium;       // always 0 for futures
 
         uint256 expiry;
@@ -53,7 +53,7 @@ contract FuturesBook {
         address indexed instance,
         bool makerIsLong,
         uint256 strikeNotional,
-        uint256 optionSize
+        uint256 positionSize
     );
 
     event PowerFuturesCreated(
@@ -61,7 +61,7 @@ contract FuturesBook {
         address indexed instance,
         bool makerIsLong,
         uint256 strikeNotional,
-        uint256 optionSize,
+        uint256 positionSize,
         uint8 payoffPower
     );
 
@@ -82,7 +82,7 @@ contract FuturesBook {
         address _strikeToken,
         string memory _underlyingSymbol,
         string memory _strikeSymbol,
-        uint256 _optionSize,
+        uint256 _positionSize,
         uint256 _premiumMustBe0,
         address _oracle,
         uint256 _strikeNotional,
@@ -100,7 +100,7 @@ contract FuturesBook {
             _underlyingSymbol,
             _strikeSymbol,
             _makerIsLong ? 1 : 0,
-            _optionSize,
+            _positionSize,
             0,
             _oracle,
             address(this)
@@ -110,7 +110,7 @@ contract FuturesBook {
         if (_makerIsLong) {
             IERC20(_strikeToken).safeTransferFrom(msg.sender, clone, _strikeNotional);
         } else {
-            IERC20(_underlyingToken).safeTransferFrom(msg.sender, clone, _optionSize);
+            IERC20(_underlyingToken).safeTransferFrom(msg.sender, clone, _positionSize);
         }
 
         LinearFiniteFutures(clone).fund(_strikeNotional, _expirySeconds);
@@ -119,7 +119,11 @@ contract FuturesBook {
 
         futuresContracts.push(clone);
         isKnownClone[clone] = true;
-        shortPosition[clone] = msg.sender;
+        if (_makerIsLong) {
+            longPosition[clone] = msg.sender;   // maker intends to be long
+        } else {
+            shortPosition[clone] = msg.sender;  // maker intends to be short
+        }
 
         futuresMetadata[clone] = FuturesMeta({
             futureAddress: clone,
@@ -128,20 +132,20 @@ contract FuturesBook {
             underlyingSymbol: _underlyingSymbol,
             strikeSymbol: _strikeSymbol,
             strikePrice: fixedStrike,
-            optionSize: _optionSize,
+            positionSize: _positionSize,
             premium: 0,
             expiry: 0,
             priceAtExpiry: 0,
             exercisedAmount: 0,
             isExercised: false,
             isResolved: false,
-            long: address(0),
-            short: msg.sender,
+            long:  _makerIsLong ? msg.sender : address(0),
+            short: _makerIsLong ? address(0)  : msg.sender,
             payoffType: "LinearFiniteFutures",
             payoffPower: 1
         });
 
-        emit LinearFuturesCreated(msg.sender, clone, _makerIsLong, _strikeNotional, _optionSize);
+        emit LinearFuturesCreated(msg.sender, clone, _makerIsLong, _strikeNotional, _positionSize);
     }
 
     // ------------------------------------------------------------------------
@@ -152,7 +156,7 @@ contract FuturesBook {
         address _strikeToken,
         string memory _underlyingSymbol,
         string memory _strikeSymbol,
-        uint256 _optionSize,
+        uint256 _positionSize,
         uint256 _premiumMustBe0,
         address _oracle,
         uint256 _strikeNotional,
@@ -172,7 +176,7 @@ contract FuturesBook {
             _underlyingSymbol,
             _strikeSymbol,
             _makerIsLong ? 1 : 0,
-            _optionSize,
+            _positionSize,
             0,
             _oracle,
             address(this)
@@ -185,7 +189,7 @@ contract FuturesBook {
         if (_makerIsLong) {
             IERC20(_strikeToken).safeTransferFrom(msg.sender, clone, _strikeNotional);
         } else {
-            IERC20(_underlyingToken).safeTransferFrom(msg.sender, clone, _optionSize);
+            IERC20(_underlyingToken).safeTransferFrom(msg.sender, clone, _positionSize);
         }
 
         PowerFiniteFutures(clone).fund(_strikeNotional, _expirySeconds);
@@ -194,7 +198,11 @@ contract FuturesBook {
 
         futuresContracts.push(clone);
         isKnownClone[clone] = true;
-        shortPosition[clone] = msg.sender;
+        if (_makerIsLong) {
+            longPosition[clone] = msg.sender;   // maker intends to be long
+        } else {
+            shortPosition[clone] = msg.sender;  // maker intends to be short
+        }
 
         futuresMetadata[clone] = FuturesMeta({
             futureAddress: clone,
@@ -203,20 +211,20 @@ contract FuturesBook {
             underlyingSymbol: _underlyingSymbol,
             strikeSymbol: _strikeSymbol,
             strikePrice: fixedStrike,
-            optionSize: _optionSize,
+            positionSize: _positionSize,
             premium: 0,
             expiry: 0,
             priceAtExpiry: 0,
             exercisedAmount: 0,
             isExercised: false,
             isResolved: false,
-            long: address(0),
-            short: msg.sender,
+            long:  _makerIsLong ? msg.sender : address(0),
+            short: _makerIsLong ? address(0)  : msg.sender,
             payoffType: "PowerFiniteFutures",
             payoffPower: _power
         });
 
-        emit PowerFuturesCreated(msg.sender, clone, _makerIsLong, _strikeNotional, _optionSize, _power);
+        emit PowerFuturesCreated(msg.sender, clone, _makerIsLong, _strikeNotional, _positionSize, _power);
     }
 
     // ------------------------------------------------------------------------
@@ -227,13 +235,29 @@ contract FuturesBook {
         require(premiumAmount == 0, "FUT: premium must be 0");
 
         FuturesMeta storage meta = futuresMetadata[futureAddress];
-        require(meta.long == address(0), "Already entered");
 
-        meta.long = msg.sender;
+        // Allow entry if exactly one side is vacant
+        bool longVacant = (meta.long == address(0));
+        bool shortVacant = (meta.short == address(0));
+        require(longVacant || shortVacant, "Already entered");
 
+        // Pre-fill the vacant side for UX (will be overwritten by instance values below)
+        if (longVacant && !shortVacant) {
+            // maker is short → entrant is long
+            meta.long = msg.sender;
+        } else if (shortVacant && !longVacant) {
+            // maker is long → entrant is short
+            meta.short = msg.sender;
+        } else {
+            // (defensive) both vacant → default entrant is long
+            meta.long = msg.sender;
+        }
+
+        // Let the instance assign roles based on maker intent
         (bool okEnter, ) = futureAddress.call(abi.encodeWithSignature("enterAsLong(address)", msg.sender));
         require(okEnter, "enterAsLong failed");
 
+        // Read final roles + expiry from the instance (source of truth)
         (bool okL, bytes memory dataL) = futureAddress.call(abi.encodeWithSignature("long()"));
         require(okL, "long() failed");
         address finalLong = abi.decode(dataL, (address));
@@ -307,7 +331,7 @@ contract FuturesBook {
         meta.isExercised = true;
         meta.exercisedAmount = strikeTokenAmount;
 
-        bool longWins = (meta.priceAtExpiry >= meta.strikePrice);
+        bool longWins = (meta.priceAtExpiry > meta.strikePrice);
         address payer = longWins ? meta.short : meta.long;
         address receiver = longWins ? meta.long : meta.short;
 

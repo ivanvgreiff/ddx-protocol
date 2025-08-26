@@ -1203,13 +1203,42 @@ app.get('/api/factory/all-futures', async (req, res) => {
             resolutionStatus = 'needs_resolution';
           }
           
+          // Fix contract metadata bug: use position mappings when metadata shows zero addresses
+          let actualLong = meta.long;
+          let actualShort = meta.short;
+          
+          if (meta.long === '0x0000000000000000000000000000000000000000') {
+            // Check longPosition mapping
+            try {
+              const longResult = await futuresBookContract.longPosition(meta.futureAddress);
+              if (longResult && longResult !== '0x0000000000000000000000000000000000000000') {
+                actualLong = longResult;
+              }
+            } catch (error) {
+              console.warn('Failed to get longPosition for', meta.futureAddress, error.message);
+            }
+          }
+          
+          if (meta.short === '0x0000000000000000000000000000000000000000') {
+            // Check shortPosition mapping  
+            try {
+              const shortResult = await futuresBookContract.shortPosition(meta.futureAddress);
+              if (shortResult && shortResult !== '0x0000000000000000000000000000000000000000') {
+                actualShort = shortResult;
+              }
+            } catch (error) {
+              console.warn('Failed to get shortPosition for', meta.futureAddress, error.message);
+            }
+          }
+
           return {
             address: meta.futureAddress,
             type: 'future',
-            contractType: 'LINEAR_FINITE_FUTURES',
-            payoffType: meta.payoffType || 'LinearFiniteFutures',
-            short: meta.short,
-            long: meta.long,
+            contractType: meta.payoffType === 'PowerFiniteFutures' ? 'POWER_FINITE_FUTURES' : 'LINEAR_FINITE_FUTURES',
+            payoffType: meta.payoffType === 'PowerFiniteFutures' ? 'Power' : 'Linear',
+            payoffPower: meta.payoffPower || 1,
+            short: actualShort,
+            long: actualLong,
             isFunded,
             isActive,
             isExercised: meta.isExercised,
@@ -1218,7 +1247,7 @@ app.get('/api/factory/all-futures', async (req, res) => {
             resolutionStatus,
             expiry: meta.expiry.toString(),
             strikePrice: meta.strikePrice.toString(),
-            optionSize: meta.optionSize.toString(),
+            optionSize: meta.positionSize.toString(),
             premium: meta.premium.toString(), // Always 0 for futures
             priceAtExpiry: meta.priceAtExpiry.toString(),
             exercisedAmount: meta.exercisedAmount.toString(),
@@ -1237,11 +1266,25 @@ app.get('/api/factory/all-futures', async (req, res) => {
     // Filter out null entries (failed metadata fetches)
     const validFutures = futuresMetadata.filter(meta => meta !== null);
     
+    // Debug: Log the data structure to identify BigInt fields
+    console.log('📊 Futures data structure debug:', JSON.stringify(validFutures, (key, value) =>
+      typeof value === 'bigint' ? `BigInt(${value})` : value
+    ));
+
+    // Convert any remaining BigInt values to strings
+    const sanitizedFutures = validFutures.map(future => {
+      const sanitized = {};
+      for (const [key, value] of Object.entries(future)) {
+        sanitized[key] = typeof value === 'bigint' ? value.toString() : value;
+      }
+      return sanitized;
+    });
+
     res.json({
       futuresBookAddress: FUTURESBOOK_ADDRESS,
-      futuresCount: validFutures.length,
+      futuresCount: sanitizedFutures.length,
       totalVolume: '0', // Futures don't have volume tracking like options
-      contracts: validFutures
+      contracts: sanitizedFutures
     });
   } catch (error) {
     console.error('Error querying futures contracts:', error);
@@ -1300,7 +1343,8 @@ app.get('/api/futures/:contractAddress', async (req, res) => {
       resolutionStatus = 'needs_resolution';
     }
     
-    res.json({
+    // Prepare response data with proper BigInt handling
+    const responseData = {
       contractAddress: futuresMeta.futureAddress,
       short: futuresMeta.short,
       long: futuresMeta.long,
@@ -1309,7 +1353,7 @@ app.get('/api/futures/:contractAddress', async (req, res) => {
       underlyingSymbol: futuresMeta.underlyingSymbol,
       strikeSymbol: futuresMeta.strikeSymbol,
       strikePrice: futuresMeta.strikePrice.toString(),
-      optionSize: futuresMeta.optionSize.toString(),
+      optionSize: futuresMeta.positionSize.toString(),
       premium: futuresMeta.premium.toString(), // Always 0 for futures
       expiry: futuresMeta.expiry.toString(),
       isActive,
@@ -1321,9 +1365,41 @@ app.get('/api/futures/:contractAddress', async (req, res) => {
       isResolved: futuresMeta.isResolved,
       needsResolution,
       resolutionStatus,
-      contractType: 'LINEAR_FINITE_FUTURES',
-      payoffType: futuresMeta.payoffType || 'LinearFiniteFutures'
-    });
+      contractType: futuresMeta.payoffType === 'PowerFiniteFutures' ? 'POWER_FINITE_FUTURES' : 'LINEAR_FINITE_FUTURES',
+      payoffType: futuresMeta.payoffType === 'PowerFiniteFutures' ? 'Power' : 'Linear',
+      payoffPower: futuresMeta.payoffPower || 1
+    };
+
+    // Convert any remaining BigInt values to strings
+    const sanitizedResponse = {};
+    for (const [key, value] of Object.entries(responseData)) {
+      sanitizedResponse[key] = typeof value === 'bigint' ? value.toString() : value;
+    }
+
+    // Fix contract metadata bug: use position mappings when metadata shows zero addresses
+    if (sanitizedResponse.long === '0x0000000000000000000000000000000000000000') {
+      try {
+        const longResult = await futuresBookContract.longPosition(contractAddress);
+        if (longResult && longResult !== '0x0000000000000000000000000000000000000000') {
+          sanitizedResponse.long = longResult;
+        }
+      } catch (error) {
+        console.warn('Failed to get longPosition for individual contract', contractAddress, error.message);
+      }
+    }
+    
+    if (sanitizedResponse.short === '0x0000000000000000000000000000000000000000') {
+      try {
+        const shortResult = await futuresBookContract.shortPosition(contractAddress);
+        if (shortResult && shortResult !== '0x0000000000000000000000000000000000000000') {
+          sanitizedResponse.short = shortResult;
+        }
+      } catch (error) {
+        console.warn('Failed to get shortPosition for individual contract', contractAddress, error.message);
+      }
+    }
+
+    res.json(sanitizedResponse);
   } catch (error) {
     console.error('❌ Error fetching futures details:', error);
     res.status(500).json({ 
@@ -1349,11 +1425,12 @@ app.post('/api/futures/create-future', async (req, res) => {
       underlyingSymbol,
       strikeSymbol,
       strikePrice, // Used to calculate strikeNotional
-      optionSize,
+      optionSize, // Frontend still sends optionSize
       premium, // Must be 0 for futures
       oracle,
       userAddress,
       payoffType,
+      payoffPower, // For Power futures
       makerSide, // 'long' or 'short' - which side maker wants to be
       makerCollateral, // Now used as strikeNotional or ignored for SHORT
       expirySeconds // New: maker-chosen expiry time
@@ -1407,19 +1484,45 @@ app.post('/api/futures/create-future', async (req, res) => {
       value: '0x0'
     };
     
-    // Prepare createAndFundLinearFuture transaction data with new signature
-    const createData = futuresBookContract.interface.encodeFunctionData('createAndFundLinearFuture', [
-      underlyingToken,
-      strikeToken,
-      underlyingSymbol,
-      strikeSymbol,
-      optionSizeWei,
-      0, // premium must be 0 for futures
-      oracle,
-      strikeNotional,
-      makerIsLong,
-      expirySecondsValue
-    ]);
+    // Prepare transaction data - choose between Linear and Power futures
+    let createData;
+    if (payoffType === 'Power') {
+      // Validate power parameter for Power futures
+      const power = parseInt(payoffPower) || 2;
+      if (power < 1 || power > 100) {
+        return res.status(400).json({ 
+          error: 'Invalid payoff power: must be between 1 and 100' 
+        });
+      }
+      
+      createData = futuresBookContract.interface.encodeFunctionData('createAndFundPowerFuture', [
+        underlyingToken,
+        strikeToken,
+        underlyingSymbol,
+        strikeSymbol,
+        optionSizeWei, // _positionSize parameter
+        0, // premium must be 0 for futures
+        oracle,
+        strikeNotional,
+        makerIsLong,
+        expirySecondsValue,
+        power // payoff power parameter
+      ]);
+    } else {
+      // Default to Linear futures
+      createData = futuresBookContract.interface.encodeFunctionData('createAndFundLinearFuture', [
+        underlyingToken,
+        strikeToken,
+        underlyingSymbol,
+        strikeSymbol,
+        optionSizeWei, // _positionSize parameter
+        0, // premium must be 0 for futures
+        oracle,
+        strikeNotional,
+        makerIsLong,
+        expirySecondsValue
+      ]);
+    }
     
     const responseData = {
       success: true,
@@ -1476,7 +1579,7 @@ app.post('/api/futures/:contractAddress/enter', async (req, res) => {
     console.log('Futures metadata:', {
       underlyingSymbol: futuresMeta.underlyingSymbol,
       strikeSymbol: futuresMeta.strikeSymbol,
-      optionSize: ethers.formatUnits(futuresMeta.optionSize, 18),
+      optionSize: ethers.formatUnits(futuresMeta.positionSize, 18),
       strikePrice: ethers.formatUnits(futuresMeta.strikePrice, 18),
       expiry: futuresMeta.expiry.toString(),
       long: futuresMeta.long,
@@ -1502,7 +1605,7 @@ app.post('/api/futures/:contractAddress/enter', async (req, res) => {
         contractDetails: {
           underlyingSymbol: futuresMeta.underlyingSymbol,
           strikeSymbol: futuresMeta.strikeSymbol,
-          optionSize: ethers.formatUnits(futuresMeta.optionSize, 18),
+          optionSize: ethers.formatUnits(futuresMeta.positionSize, 18),
           strikePrice: ethers.formatUnits(futuresMeta.strikePrice, 18),
           expiry: futuresMeta.expiry.toString()
         }

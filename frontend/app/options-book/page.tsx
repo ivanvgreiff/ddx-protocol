@@ -657,12 +657,12 @@ export default function OptionsMarketPage() {
                     </div>
 
                     <div className="flex gap-2 pt-4">
-                      {!option.isActive && (() => {
-                        const isNonUserContract = !account || 
-                          (!option.short || account.toLowerCase() !== option.short.toLowerCase()) && 
-                          (!option.long || account.toLowerCase() !== option.long.toLowerCase())
+                      {!option.isActive && !isShortPosition && (() => {
+                        const isLongPosition = option.long && account && option.long.toLowerCase() === account.toLowerCase()
+                        const isShortPosition = option.short && account && option.short.toLowerCase() === account.toLowerCase()
+                        const isNonUserContract = !isLongPosition && !isShortPosition
                         
-                        const buttonColor = isNonUserContract ? '#ff1493' : '#39FF14'
+                        const buttonColor = isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493'
                         
                         return (
                           <Button
@@ -675,27 +675,20 @@ export default function OptionsMarketPage() {
                               transition: 'all 0.3s ease'
                             }}
                             onMouseEnter={(e) => {
-                              if (isNonUserContract) {
-                                // For non-user contracts, keep the pink color animation
-                                e.currentTarget.style.background = '#ff1493'
-                                e.currentTarget.style.opacity = '0.9'
-                                e.currentTarget.style.transform = 'scale(1.05)'
-                              } else {
-                                // For user contracts, apply gradient animation with fade-in
-                                const element = e.currentTarget
-                                element.style.transition = 'background 0.5s ease-in-out, background-size 0.5s ease-in-out'
-                                setTimeout(() => {
-                                  if (element && element.style) {
-                                    element.style.background = `linear-gradient(45deg, var(--primary), var(--accent), var(--primary))`
-                                    element.style.backgroundSize = '250% 250%'
-                                    setTimeout(() => {
-                                      if (element && element.style) {
-                                        element.style.animation = 'gradient-shift-strong 3.1s ease-in-out infinite'
-                                      }
-                                    }, 200)
-                                  }
-                                }, 100)
-                              }
+                              // Create animated background gradient with fade-in
+                              const element = e.currentTarget
+                              element.style.transition = 'background 0.5s ease-in-out, background-size 0.5s ease-in-out'
+                              setTimeout(() => {
+                                if (element && element.style) {
+                                  element.style.background = `linear-gradient(45deg, var(--primary), var(--accent), var(--primary))`
+                                  element.style.backgroundSize = '250% 250%'
+                                  setTimeout(() => {
+                                    if (element && element.style) {
+                                      element.style.animation = 'gradient-shift-strong 3.1s ease-in-out infinite'
+                                    }
+                                  }, 200)
+                                }
+                              }, 100)
                             }}
                             onMouseLeave={(e) => {
                               // Reset to original color with smooth transition
@@ -705,8 +698,6 @@ export default function OptionsMarketPage() {
                                 element.style.transition = 'all 0.3s ease-in-out'
                                 element.style.background = buttonColor
                                 element.style.backgroundSize = 'auto'
-                                element.style.opacity = '1'
-                                element.style.transform = 'scale(1)'
                               }
                             }}
                             onClick={() => handleEnter(option.address)}

@@ -500,7 +500,14 @@ export default function FuturesBookPage() {
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-lg">
-                        Linear Future
+                        {(() => {
+                          // Determine contract type and display name
+                          const contractType = future.contractType || future.payoffType || future.optionType || 'LinearFiniteFutures'
+                          if (contractType.toLowerCase().includes('power')) {
+                            return 'Power Futures'
+                          }
+                          return 'Linear Futures'
+                        })()}
                       </CardTitle>
                       <div className="flex gap-2">
                         {(() => {
@@ -564,7 +571,15 @@ export default function FuturesBookPage() {
                     <div className="grid grid-cols-2 gap-2 text-sm">
                       <div>
                         <span className="text-muted-foreground">Strike Price:</span>
-                        <div className="font-medium">{future.strikePrice ? formatTokenAmount(future.strikePrice, future.strikeSymbol || 'MTK') : 'Set on activation'}</div>
+                        <div className="font-medium">
+                          {(() => {
+                            // Strike price is now set during funding, not activation
+                            if (future.strikePrice && future.strikePrice !== '0') {
+                              return formatTokenAmount(future.strikePrice, future.strikeSymbol || 'MTK')
+                            }
+                            return future.isFunded ? 'Set during funding' : 'Not funded yet'
+                          })()}
+                        </div>
                       </div>
                       <div>
                         <span className="text-muted-foreground">Contract Size:</span>
@@ -585,9 +600,23 @@ export default function FuturesBookPage() {
                         </div>
                       </div>
                       <div>
-                        <span className="text-muted-foreground">Expiry:</span>
-                        <div className="font-medium">{formatExpiry(future)}</div>
+                        <span className="text-muted-foreground">Power:</span>
+                        <div className="font-medium">
+                          {(() => {
+                            const contractType = future.contractType || future.payoffType || future.optionType || 'LinearFiniteFutures'
+                            if (contractType.toLowerCase().includes('power')) {
+                              return future.payoffPower || 2
+                            }
+                            return 1
+                          })()}
+                        </div>
                       </div>
+                    </div>
+
+                    {/* Show expiry for all futures */}
+                    <div className="text-sm">
+                      <span className="text-muted-foreground">Expiry:</span>
+                      <div className="font-medium">{formatExpiry(future)}</div>
                     </div>
 
                     <div className="text-sm">
@@ -610,7 +639,14 @@ export default function FuturesBookPage() {
                     <div className="mt-4 mb-2 flex justify-center">
                       <OptionPayoffChart
                         optionType="CALL"
-                        payoffType="Linear"
+                        payoffType={(() => {
+                          const contractType = future.contractType || future.payoffType || future.optionType || 'LinearFiniteFutures'
+                          if (contractType.toLowerCase().includes('power')) {
+                            return 'Power'
+                          }
+                          return 'Linear'
+                        })()}
+                        payoffPower={future.payoffPower || 2}
                         strikePrice={future.strikePrice || "1000000000000000000"}
                         optionSize={future.optionSize}
                         strikeSymbol={future.strikeSymbol || 'MTK'}

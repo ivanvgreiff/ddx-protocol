@@ -6,82 +6,93 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./SimuOracle.sol";
 import "./FuturesBook.sol";
 
+/**
+ * @title LinearFiniteFutures
+ * @notice Cash-settled finite futures with linear payoff: payout magnitude is |S-K| * positionSize / 1e18,
+ *         paid to the winning side (long if S>K, short if S<K). All amounts are 1e18-scaled.
+ */
 contract LinearFiniteFutures {
     using SafeERC20 for IERC20;
 
-    // keep the same variable names as CallOptionContract for parity
-    address public short;      // initialized to maker
+    // Roles
+    address public short;          // initialized to maker
     address public long;
-    address public optionsBook;
+    address public futuresBook;    // factory/controller
 
+    // Tokens and market identifiers
     IERC20 public underlyingToken;
     IERC20 public strikeToken;
-
     string public underlyingSymbol;
     string public strikeSymbol;
 
-    // strikePrice is FIXED from funding (1e18)
-    uint256 public strikePrice;
-    // optionSize stores QUANTITY (1e18 underlying units)
-    uint256 public optionSize;
+    // Economics
+    uint256 public strikePrice;    // fixed at funding, 1e18-scaled (strikeNotional / positionSize)
+    uint256 public positionSize;   // quantity in underlying units (1e18)
+    uint256 public premium;        // always 0 for futures (kept for interface parity)
 
-    // futures have no premium; keep the variable for parity (always 0)
-    uint256 public premium;
-
-    uint256 public expiry;     // set on activation using maker-chosen seconds
+    // Lifecycle
+    uint256 public expiry;         // set on activation using maker-chosen relative seconds
     bool public isActive;
     bool public isExercised;
     bool public isFunded;
 
+    // Settlement
     SimuOracle public oracle;
     uint256 public priceAtExpiry;
     bool public isResolved;
 
+    // Init & maker intent
     bool private initialized;
-
-    // Maker intent (set at initialize)
     bool private makerIsLongFlag;
-    address public maker; // equals initial short at initialize
-
-    // maker-chosen relative expiry (seconds), applied when counterparty enters
+    address public maker;          // equals initial short at initialize
     uint256 public makerExpirySeconds;
 
-    // Track whether we've returned the maker's funding (to avoid trapping tokens)
+    // Bookkeeping
     bool private fundingRefunded;
 
-    string public constant optionType = "LINEAR_FINITE_FUTURES";
+    // Introspection
+    string public constant futureType = "LINEAR_FINITE_FUTURES";
 
-    event OptionCreated(address indexed maker);
-    event ShortFunded(address indexed maker, uint256 optionSize);
-    event OptionActivated(address indexed long, uint256 premiumPaid, uint256 expiry);
-    event OptionExercised(address indexed long, uint256 pnlPaid, uint256 sameAsPnl);
-    event OptionExpiredUnused(address indexed short);
-    event PriceResolved(string underlyingSymbol, string strikeSymbol, uint256 priceAtExpiry, uint256 resolvedAt);
+    // Events
+    event FutureCreated(address indexed maker);
+    event FutureFunded(address indexed maker, uint256 positionSize);
+    event FutureActivated(address indexed long, uint256 premiumPaid, uint256 expiry);
+    event FutureSettled(address indexed long, uint256 pnlPaid, uint256 sameAsPnl);
+    event FutureExpiredUnused(address indexed short);
+    event PriceResolved(
+        string underlyingSymbol,
+        string strikeSymbol,
+        uint256 priceAtExpiry,
+        uint256 resolvedAt
+    );
     event FundingRefunded(address indexed maker, address token, uint256 amount);
 
+    // Access control
     modifier onlyBook() {
-        require(msg.sender == optionsBook, "Only OptionsBook");
+        require(msg.sender == futuresBook, "Only FuturesBook");
         _;
     }
 
+    /**
+     * @dev Initialize a newly cloned futures instance. Called once by the FuturesBook.
+     */
     function initialize(
         address _short,
         address _underlyingToken,
         address _strikeToken,
         string memory _underlyingSymbol,
         string memory _strikeSymbol,
-        uint256 _sideFlag, // 1 => maker wants to be long, 0 => maker wants to be short
-        uint256 _optionSize,
+        uint256 _sideFlag,
+        uint256 _positionSize,
         uint256 _premiumMustBeZero,
         address _oracle,
-        address _optionsBook
+        address _futuresBook
     ) external {
         require(!initialized, "Already initialized");
         initialized = true;
         require(_premiumMustBeZero == 0, "FUT: premium must be 0");
-        require(_optionSize > 0, "FUT: size=0");
+        require(_positionSize > 0, "FUT: size=0");
 
-        // Record maker and default roles (parity with options naming)
         short = _short;
         maker = _short;
 
@@ -91,23 +102,26 @@ contract LinearFiniteFutures {
         strikeSymbol     = _strikeSymbol;
 
         makerIsLongFlag = (_sideFlag != 0);
-        optionSize = _optionSize;
+        positionSize = _positionSize;
         premium = 0;
 
         oracle = SimuOracle(_oracle);
-        optionsBook = _optionsBook;
+        futuresBook = _futuresBook;
 
-        emit OptionCreated(maker);
+        // Set whichever side the maker chose; leave the counterparty slot empty
+        if (makerIsLongFlag) {
+            long  = _short;        // maker is long now
+            short = address(0);    // taker to be filled on enter
+        } else {
+            short = _short;        // maker is short now
+            long  = address(0);    // taker to be filled on enter
+        }
+
+        emit FutureCreated(maker);
     }
 
     /**
      * @dev Finalize funding after the book has transferred tokens in.
-     * @param strikeNotional amount in strike tokens used to compute the fixed strike (desiredStrike * optionSize)
-     * @param expirySeconds  maker-chosen relative expiry, applied when the counterparty enters
-     *
-     * Funding checks:
-     *  - If maker wants LONG  → this contract must currently hold exactly 'strikeNotional' strike tokens.
-     *  - If maker wants SHORT → this contract must currently hold >= 'optionSize' underlying tokens.
      */
     function fund(uint256 strikeNotional, uint256 expirySeconds) external onlyBook {
         require(!isFunded, "Already funded");
@@ -115,46 +129,47 @@ contract LinearFiniteFutures {
         require(expirySeconds > 0, "FUT: expirySeconds=0");
 
         if (makerIsLongFlag) {
-            // LONG maker funded with strike tokens
+            // LONG maker funds with strike tokens
             require(strikeToken.balanceOf(address(this)) == strikeNotional, "FUT: bad strike funding");
         } else {
-            // SHORT maker funded with underlying tokens
-            require(underlyingToken.balanceOf(address(this)) >= optionSize, "FUT: bad underlying funding");
+            // SHORT maker funds with underlying tokens
+            require(underlyingToken.balanceOf(address(this)) >= positionSize, "FUT: bad underlying funding");
         }
 
-        // Fix the strike from notional and size (1e18 scaling)
-        strikePrice = (strikeNotional * 1e18) / optionSize;
+        // Fix strike from notional and size (1e18 scaling)
+        strikePrice = (strikeNotional * 1e18) / positionSize;
         makerExpirySeconds = expirySeconds;
 
         isFunded = true;
-        emit ShortFunded(maker, optionSize);
+        emit FutureFunded(maker, positionSize);
     }
 
     /**
-     * @notice Counterparty enters; roles are assigned per maker intent; expiry is applied from maker's chosen seconds.
-     * No tokens move here; futures have no premium.
+     * @notice Counterparty enters; fill only the vacant role based on maker intent.
      */
     function enterAsLong(address realLong) external onlyBook {
         require(isFunded, "Not funded yet");
         require(!isActive, "Already active");
-        require(long == address(0), "Already entered");
 
         if (makerIsLongFlag) {
-            // Maker is the long; entrant becomes short.
-            long = maker;
+            // maker already long; short must be empty
+            require(short == address(0), "Already entered");
             short = realLong;
         } else {
-            // Maker is the short; entrant becomes long.
+            // maker is short; long must be empty
+            require(long == address(0), "Already entered");
             long = realLong;
-            // short remains maker
         }
 
         isActive = true;
         expiry = block.timestamp + makerExpirySeconds;
 
-        emit OptionActivated(long, 0, expiry);
+        emit FutureActivated(long, 0, expiry);
     }
 
+    /**
+     * @notice Resolve the settlement price from the oracle at/after expiry.
+     */
     function resolve() public {
         require(isActive, "Not active");
         require(block.timestamp >= expiry, "Too early");
@@ -170,9 +185,7 @@ contract LinearFiniteFutures {
     }
 
     /**
-     * @notice Cash settlement: absolute PnL in strike token.
-     * Either party may ask the book to settle; the book will transfer strike from loser → winner.
-     * We also refund maker’s funded tokens (so nothing remains trapped in the instance).
+     * @notice Cash settlement: linear magnitude, book transfers strike between parties.
      */
     function exercise(uint256 /* mtkAmount */, address realLong) external onlyBook {
         require(isActive, "Not active");
@@ -185,23 +198,20 @@ contract LinearFiniteFutures {
         uint256 p1 = priceAtExpiry;
         require(p0 > 0 && p1 > 0, "Bad prices");
 
-        uint256 diff = p1 > p0 ? (p1 - p0) : (p0 - p1);
-        uint256 payout = (diff * optionSize) / 1e18;
+        uint256 diff = p1 > p0 ? (p1 - p0) : (p0 - p1); // 1e18
+        uint256 payout = (diff * positionSize) / 1e18;  // strike units
 
         isExercised = true;
 
-        // Always refund the maker's funded asset; futures are cash-settled in strike tokens.
         _refundFundingToMaker();
 
-        // Inform the book of the absolute payout to move strike tokens loser → winner.
-        FuturesBook(optionsBook).notifyExercised(payout);
+        FuturesBook(futuresBook).notifyExercised(payout);
 
-        emit OptionExercised(realLong, payout, payout);
+        emit FutureSettled(realLong, payout, payout);
     }
 
     /**
-     * @notice If unexercised after expiry, the short (maker) can reclaim.
-     * This refunds the maker's funded tokens and ends the position.
+     * @notice If unexercised after expiry, the short (maker) can reclaim funded assets and end the position.
      */
     function reclaim(address realShort) external onlyBook {
         require(isActive, "Not active");
@@ -212,7 +222,7 @@ contract LinearFiniteFutures {
         isExercised = true; // terminal state
         _refundFundingToMaker();
 
-        emit OptionExpiredUnused(realShort);
+        emit FutureExpiredUnused(realShort);
     }
 
     function getOracleAddress() external view returns (address) {
@@ -220,7 +230,6 @@ contract LinearFiniteFutures {
     }
 
     // ==== internal helpers ====
-
     function _refundFundingToMaker() internal {
         if (fundingRefunded) return;
         fundingRefunded = true;
