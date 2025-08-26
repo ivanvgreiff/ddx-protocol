@@ -11,6 +11,7 @@ import { TrendingUp, DollarSign, Eye, AlertTriangle } from 'lucide-react'
 import OptionPayoffChart from "@/components/OptionPayoffChart"
 
 import { useWallet } from "@/components/wallet-context"
+import { COLORS } from "@/lib/colors"
 
 // Real data fetching hook
 const useQuery = (key: string, fetchFn: () => Promise<any>, options?: any) => {
@@ -71,6 +72,12 @@ export default function OptionsMarketPage() {
   const { account, sendTransaction } = useWallet()
   const [filter, setFilter] = useState('all')
   const [currentTime, setCurrentTime] = useState(Date.now())
+
+  // Color constants (imported from central colors file)
+  const LONG_COLOR = COLORS.LONG
+  const SHORT_COLOR = COLORS.SHORT
+  const NEUTRAL_COLOR = COLORS.NEUTRAL_OPTIONS
+  const TEXT_ON_COLOR = COLORS.TEXT_ON_COLOR
 
   // Update current time every second for real-time countdown
   useEffect(() => {
@@ -538,9 +545,9 @@ export default function OptionsMarketPage() {
                             <Badge
                               variant="outline"
                               style={{
-                                backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
-                                color: '#000000',
-                                borderColor: isShortPosition ? '#FFAD00' : '#39FF14'
+                                backgroundColor: isShortPosition ? SHORT_COLOR : LONG_COLOR,
+                                color: TEXT_ON_COLOR,
+                                borderColor: isShortPosition ? SHORT_COLOR : LONG_COLOR
                               }}
                             >
                               {isShortPosition ? 'Short' : 'Long'}
@@ -559,21 +566,21 @@ export default function OptionsMarketPage() {
                             
                             if (status.class === 'exercised') {
                               return {
-                                backgroundColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493',
-                                color: '#000000',
-                                borderColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493'
+                                backgroundColor: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,
+                                color: TEXT_ON_COLOR,
+                                borderColor: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR
                               }
                             } else if (status.class === 'reclaimed') {
                               return {
-                                backgroundColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493',
-                                color: '#000000',
-                                borderColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493'
+                                backgroundColor: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,
+                                color: TEXT_ON_COLOR,
+                                borderColor: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR
                               }
                             } else if (status.class === 'expired') {
                               // This covers "Unresolved" status - just text color, no background or border
                               return {
                                 backgroundColor: 'transparent',
-                                color: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493',
+                                color: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,
                                 border: 'none'
                               }
                             }
@@ -662,7 +669,7 @@ export default function OptionsMarketPage() {
                         const isShortPosition = option.short && account && option.short.toLowerCase() === account.toLowerCase()
                         const isNonUserContract = !isLongPosition && !isShortPosition
                         
-                        const buttonColor = isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493'
+                        const buttonColor = isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR
                         
                         return (
                           <Button
@@ -670,7 +677,7 @@ export default function OptionsMarketPage() {
                             className="flex-1 group transition-all duration-300"
                             style={{
                               backgroundColor: buttonColor,
-                              color: '#000000',
+                              color: TEXT_ON_COLOR,
                               border: `1px solid ${buttonColor}`,
                               transition: 'all 0.3s ease'
                             }}
@@ -710,7 +717,7 @@ export default function OptionsMarketPage() {
                       
                       {canExercise && (() => {
                         const buttonIsLong = option.long && account && option.long.toLowerCase() === account.toLowerCase()
-                        const buttonColor = buttonIsLong ? '#39FF14' : '#FFAD00'
+                        const buttonColor = buttonIsLong ? LONG_COLOR : SHORT_COLOR
                         
                         return (
                           <Button
@@ -718,7 +725,7 @@ export default function OptionsMarketPage() {
                             className="flex-1 group transition-all duration-300"
                             style={{
                               backgroundColor: buttonColor,
-                              color: '#000000',
+                              color: TEXT_ON_COLOR,
                               border: `1px solid ${buttonColor}`,
                               transition: 'all 0.3s ease'
                             }}
@@ -765,9 +772,9 @@ export default function OptionsMarketPage() {
                             size="sm"
                             className="flex-1 group transition-all duration-300"
                             style={{
-                              backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
-                              color: '#000000',
-                              border: `1px solid ${isShortPosition ? '#FFAD00' : '#39FF14'}`,
+                              backgroundColor: isShortPosition ? SHORT_COLOR : LONG_COLOR,
+                              color: TEXT_ON_COLOR,
+                              border: `1px solid ${isShortPosition ? SHORT_COLOR : LONG_COLOR}`,
                               transition: 'all 0.3s ease'
                             }}
                             onMouseEnter={(e) => {
@@ -792,7 +799,7 @@ export default function OptionsMarketPage() {
                               if (element && element.style) {
                                 element.style.animation = 'none'
                                 element.style.transition = 'all 0.3s ease-in-out'
-                                element.style.background = isShortPosition ? '#FFAD00' : '#39FF14'
+                                element.style.background = isShortPosition ? SHORT_COLOR : LONG_COLOR
                                 element.style.backgroundSize = 'auto'
                               }
                             }}
@@ -809,7 +816,7 @@ export default function OptionsMarketPage() {
                         const isShortPosition = option.short && account && option.short.toLowerCase() === account.toLowerCase()
                         const isNonUserContract = !isLongPosition && !isShortPosition
                         
-                        const buttonColor = isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493'
+                        const buttonColor = isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR
                         
                         return (
                           <Button

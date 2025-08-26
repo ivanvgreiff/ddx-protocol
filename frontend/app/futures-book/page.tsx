@@ -13,6 +13,7 @@ import { TrendingUp, DollarSign, Eye, AlertTriangle } from 'lucide-react'
 import OptionPayoffChart from "@/components/OptionPayoffChart"
 
 import { useWallet } from "@/components/wallet-context"
+import { COLORS } from "@/lib/colors"
 
 // Real data fetching hook
 const useQuery = (key: string, fetchFn: () => Promise<any>, options?: any) => {
@@ -75,6 +76,12 @@ export default function FuturesBookPage() {
   const [currentTime, setCurrentTime] = useState(Date.now())
   const [showEnterDialog, setShowEnterDialog] = useState(false)
   const [selectedContract, setSelectedContract] = useState<any>(null)
+
+  // Color constants (imported from central colors file)
+  const LONG_COLOR = COLORS.LONG
+  const SHORT_COLOR = COLORS.SHORT
+  const NEUTRAL_COLOR = COLORS.NEUTRAL
+  const TEXT_ON_COLOR = COLORS.TEXT_ON_COLOR
 
   // Update current time every second for real-time countdown
   useEffect(() => {
@@ -505,6 +512,8 @@ export default function FuturesBookPage() {
                           const contractType = future.contractType || future.payoffType || future.optionType || 'LinearFiniteFutures'
                           if (contractType.toLowerCase().includes('power')) {
                             return 'Power Futures'
+                          } else if (contractType.toLowerCase().includes('sigmoid')) {
+                            return 'Sigmoid Futures'
                           }
                           return 'Linear Futures'
                         })()}
@@ -520,9 +529,9 @@ export default function FuturesBookPage() {
                             <Badge
                               variant="outline"
                               style={{
-                                backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
-                                color: '#000000',
-                                borderColor: isShortPosition ? '#FFAD00' : '#39FF14'
+                                backgroundColor: isShortPosition ? SHORT_COLOR : LONG_COLOR,
+                                color: TEXT_ON_COLOR,
+                                borderColor: isShortPosition ? SHORT_COLOR : LONG_COLOR
                               }}
                             >
                               {isShortPosition ? 'Short' : 'Long'}
@@ -541,21 +550,21 @@ export default function FuturesBookPage() {
                             
                             if (status.class === 'exercised') {
                               return {
-                                backgroundColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5',
-                                color: '#000000',
-                                borderColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5'
+                                backgroundColor: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,
+                                color: TEXT_ON_COLOR,
+                                borderColor: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR
                               }
                             } else if (status.class === 'reclaimed') {
                               return {
-                                backgroundColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5',
-                                color: '#000000',
-                                borderColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5'
+                                backgroundColor: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,
+                                color: TEXT_ON_COLOR,
+                                borderColor: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR
                               }
                             } else if (status.class === 'expired') {
                               // This covers "Unresolved" status - just text color, no background or border
                               return {
                                 backgroundColor: 'transparent',
-                                color: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5',
+                                color: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,
                                 border: 'none'
                               }
                             }
@@ -600,12 +609,24 @@ export default function FuturesBookPage() {
                         </div>
                       </div>
                       <div>
-                        <span className="text-muted-foreground">Power:</span>
+                        <span className="text-muted-foreground">
+                          {(() => {
+                            const contractType = future.contractType || future.payoffType || future.optionType || 'LinearFiniteFutures'
+                            if (contractType.toLowerCase().includes('power')) {
+                              return 'Power:'
+                            } else if (contractType.toLowerCase().includes('sigmoid')) {
+                              return 'Intensity:'
+                            }
+                            return 'Power:'
+                          })()}
+                        </span>
                         <div className="font-medium">
                           {(() => {
                             const contractType = future.contractType || future.payoffType || future.optionType || 'LinearFiniteFutures'
                             if (contractType.toLowerCase().includes('power')) {
                               return future.payoffPower || 2
+                            } else if (contractType.toLowerCase().includes('sigmoid')) {
+                              return future.sigmoidIntensity || future.intensity || '1.0'
                             }
                             return 1
                           })()}
@@ -643,10 +664,13 @@ export default function FuturesBookPage() {
                           const contractType = future.contractType || future.payoffType || future.optionType || 'LinearFiniteFutures'
                           if (contractType.toLowerCase().includes('power')) {
                             return 'Power'
+                          } else if (contractType.toLowerCase().includes('sigmoid')) {
+                            return 'Sigmoid'
                           }
                           return 'Linear'
                         })()}
                         payoffPower={future.payoffPower || 2}
+                        sigmoidIntensity={future.sigmoidIntensity || future.intensity || 1.0}
                         strikePrice={future.strikePrice || "1000000000000000000"}
                         optionSize={future.optionSize}
                         strikeSymbol={future.strikeSymbol || 'MTK'}
@@ -667,7 +691,7 @@ export default function FuturesBookPage() {
                           (!future.short || account.toLowerCase() !== future.short.toLowerCase()) && 
                           (!future.long || account.toLowerCase() !== future.long.toLowerCase())
                         
-                        const buttonColor = isNonUserContract ? '#4f46e5' : '#39FF14'
+                        const buttonColor = isNonUserContract ? NEUTRAL_COLOR : LONG_COLOR
                         
                         return (
                           <Button
@@ -675,14 +699,14 @@ export default function FuturesBookPage() {
                             className="flex-1 group transition-all duration-300"
                             style={{
                               backgroundColor: buttonColor,
-                              color: '#000000',
+                              color: TEXT_ON_COLOR,
                               border: `1px solid ${buttonColor}`,
                               transition: 'all 0.3s ease'
                             }}
                             onMouseEnter={(e) => {
                               if (isNonUserContract) {
                                 // For non-user contracts, keep the indigo color animation
-                                e.currentTarget.style.background = '#4f46e5'
+                                e.currentTarget.style.background = NEUTRAL_COLOR
                                 e.currentTarget.style.opacity = '0.9'
                                 e.currentTarget.style.transform = 'scale(1.05)'
                               } else {
@@ -724,7 +748,7 @@ export default function FuturesBookPage() {
                       
                       {canExercise && (() => {
                         const buttonIsLong = future.long && account && future.long.toLowerCase() === account.toLowerCase()
-                        const buttonColor = buttonIsLong ? '#39FF14' : '#FFAD00'
+                        const buttonColor = buttonIsLong ? LONG_COLOR : SHORT_COLOR
                         
                         return (
                           <Button
@@ -732,7 +756,7 @@ export default function FuturesBookPage() {
                             className="flex-1 group transition-all duration-300"
                             style={{
                               backgroundColor: buttonColor,
-                              color: '#000000',
+                              color: TEXT_ON_COLOR,
                               border: `1px solid ${buttonColor}`,
                               transition: 'all 0.3s ease'
                             }}
@@ -779,9 +803,9 @@ export default function FuturesBookPage() {
                             size="sm"
                             className="flex-1 group transition-all duration-300"
                             style={{
-                              backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
-                              color: '#000000',
-                              border: `1px solid ${isShortPosition ? '#FFAD00' : '#39FF14'}`,
+                              backgroundColor: isShortPosition ? SHORT_COLOR : LONG_COLOR,
+                              color: TEXT_ON_COLOR,
+                              border: `1px solid ${isShortPosition ? SHORT_COLOR : LONG_COLOR}`,
                               transition: 'all 0.3s ease'
                             }}
                             onMouseEnter={(e) => {
@@ -806,7 +830,7 @@ export default function FuturesBookPage() {
                               if (element && element.style) {
                                 element.style.animation = 'none'
                                 element.style.transition = 'all 0.3s ease-in-out'
-                                element.style.background = isShortPosition ? '#FFAD00' : '#39FF14'
+                                element.style.background = isShortPosition ? SHORT_COLOR : LONG_COLOR
                                 element.style.backgroundSize = 'auto'
                               }
                             }}
@@ -823,7 +847,7 @@ export default function FuturesBookPage() {
                         const isShortPosition = future.short && account && future.short.toLowerCase() === account.toLowerCase()
                         const isNonUserContract = !isLongPosition && !isShortPosition
                         
-                        const buttonColor = isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5'
+                        const buttonColor = isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR
                         
                         return (
                           <Button

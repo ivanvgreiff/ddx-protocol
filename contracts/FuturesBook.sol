@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./LinearFiniteFutures.sol";
 import "./PowerFiniteFutures.sol";
+import "./SigmoidFiniteFutures.sol";
 
 contract FuturesBook {
     using SafeERC20 for IERC20;
@@ -13,6 +14,7 @@ contract FuturesBook {
     // Implementation addresses
     address public futuresImpl;        // linear impl
     address public powerFuturesImpl;   // power impl
+    address public sigmoidFuturesImpl; // sigmoid impl   <-- NEW
 
     address[] public futuresContracts;
 
@@ -41,8 +43,8 @@ contract FuturesBook {
         address long;
         address short;
 
-        string payoffType;     // "LinearFiniteFutures" or "PowerFiniteFutures"
-        uint8 payoffPower;     // 1 for linear, N>=1 for power
+        string payoffType;     // "LinearFiniteFutures" | "PowerFiniteFutures" | "SigmoidFiniteFutures"
+        uint8 payoffPower;     // 1 for linear, N>=1 for power, 0 for sigmoid (unused)
     }
 
     mapping(address => FuturesMeta) public futuresMetadata;
@@ -65,17 +67,29 @@ contract FuturesBook {
         uint8 payoffPower
     );
 
-    // Shared events (apply to both types)
+    // NEW: Sigmoid event
+    event SigmoidFuturesCreated(
+        address indexed creator,
+        address indexed instance,
+        bool makerIsLong,
+        uint256 strikeNotional,
+        uint256 positionSize,
+        uint256 intensity1e18
+    );
+
+    // Shared events (apply to all types)
     event FutureActivated(address indexed instance, address indexed long, address indexed short, uint256 expiry);
     event FutureExercised(address indexed instance, uint256 strikeTokenAmount);
 
-    constructor(address _futuresImpl, address _powerFuturesImpl) {
+    // NOTE: constructor signature changed to add _sigmoidFuturesImpl
+    constructor(address _futuresImpl, address _powerFuturesImpl, address _sigmoidFuturesImpl) {
         futuresImpl = _futuresImpl;
         powerFuturesImpl = _powerFuturesImpl;
+        sigmoidFuturesImpl = _sigmoidFuturesImpl; // NEW
     }
 
     // ------------------------------------------------------------------------
-    // LINEAR FUTURES
+    // LINEAR FUTURES (unchanged)
     // ------------------------------------------------------------------------
     function createAndFundLinearFuture(
         address _underlyingToken,
@@ -106,7 +120,6 @@ contract FuturesBook {
             address(this)
         );
 
-        // Pull maker funding
         if (_makerIsLong) {
             IERC20(_strikeToken).safeTransferFrom(msg.sender, clone, _strikeNotional);
         } else {
@@ -120,9 +133,9 @@ contract FuturesBook {
         futuresContracts.push(clone);
         isKnownClone[clone] = true;
         if (_makerIsLong) {
-            longPosition[clone] = msg.sender;   // maker intends to be long
+            longPosition[clone] = msg.sender;
         } else {
-            shortPosition[clone] = msg.sender;  // maker intends to be short
+            shortPosition[clone] = msg.sender;
         }
 
         futuresMetadata[clone] = FuturesMeta({
@@ -149,7 +162,7 @@ contract FuturesBook {
     }
 
     // ------------------------------------------------------------------------
-    // POWER FUTURES
+    // POWER FUTURES (unchanged)
     // ------------------------------------------------------------------------
     function createAndFundPowerFuture(
         address _underlyingToken,
@@ -182,10 +195,8 @@ contract FuturesBook {
             address(this)
         );
 
-        // Set payoff power before funding
         PowerFiniteFutures(clone).setPayoffPower(_power);
 
-        // Pull maker funding
         if (_makerIsLong) {
             IERC20(_strikeToken).safeTransferFrom(msg.sender, clone, _strikeNotional);
         } else {
@@ -199,9 +210,9 @@ contract FuturesBook {
         futuresContracts.push(clone);
         isKnownClone[clone] = true;
         if (_makerIsLong) {
-            longPosition[clone] = msg.sender;   // maker intends to be long
+            longPosition[clone] = msg.sender;
         } else {
-            shortPosition[clone] = msg.sender;  // maker intends to be short
+            shortPosition[clone] = msg.sender;
         }
 
         futuresMetadata[clone] = FuturesMeta({
@@ -228,7 +239,85 @@ contract FuturesBook {
     }
 
     // ------------------------------------------------------------------------
-    // SHARED LOGIC
+    // SIGMOID FUTURES (NEW)
+    // ------------------------------------------------------------------------
+    function createAndFundSigmoidFuture(
+        address _underlyingToken,
+        address _strikeToken,
+        string memory _underlyingSymbol,
+        string memory _strikeSymbol,
+        uint256 _positionSize,
+        uint256 _premiumMustBe0,
+        address _oracle,
+        uint256 _strikeNotional,
+        bool _makerIsLong,
+        uint256 _expirySeconds,
+        uint256 _intensity1e18               // I, 1e18-scaled
+    ) external returns (address clone) {
+        require(_premiumMustBe0 == 0, "FUT: premium must be 0");
+
+        clone = Clones.clone(sigmoidFuturesImpl);
+
+        SigmoidFiniteFutures(clone).initialize(
+            msg.sender,
+            _underlyingToken,
+            _strikeToken,
+            _underlyingSymbol,
+            _strikeSymbol,
+            _makerIsLong ? 1 : 0,
+            _positionSize,
+            0,
+            _oracle,
+            address(this)
+        );
+
+        // Set intensity before funding
+        SigmoidFiniteFutures(clone).setSigmoidIntensity(_intensity1e18);
+
+        // Pull maker funding (same pattern as others)
+        if (_makerIsLong) {
+            IERC20(_strikeToken).safeTransferFrom(msg.sender, clone, _strikeNotional);
+        } else {
+            IERC20(_underlyingToken).safeTransferFrom(msg.sender, clone, _positionSize);
+        }
+
+        SigmoidFiniteFutures(clone).fund(_strikeNotional, _expirySeconds);
+
+        uint256 fixedStrike = _readStrike(clone);
+
+        futuresContracts.push(clone);
+        isKnownClone[clone] = true;
+        if (_makerIsLong) {
+            longPosition[clone] = msg.sender;
+        } else {
+            shortPosition[clone] = msg.sender;
+        }
+
+        futuresMetadata[clone] = FuturesMeta({
+            futureAddress: clone,
+            underlyingToken: _underlyingToken,
+            strikeToken: _strikeToken,
+            underlyingSymbol: _underlyingSymbol,
+            strikeSymbol: _strikeSymbol,
+            strikePrice: fixedStrike,
+            positionSize: _positionSize,
+            premium: 0,
+            expiry: 0,
+            priceAtExpiry: 0,
+            exercisedAmount: 0,
+            isExercised: false,
+            isResolved: false,
+            long:  _makerIsLong ? msg.sender : address(0),
+            short: _makerIsLong ? address(0)  : msg.sender,
+            payoffType: "SigmoidFiniteFutures",
+            payoffPower: 0 // not used for sigmoid
+        });
+
+        emit SigmoidFuturesCreated(msg.sender, clone, _makerIsLong, _strikeNotional, _positionSize, _intensity1e18);
+    }
+
+    // ------------------------------------------------------------------------
+    // SHARED LOGIC (unchanged)
     // ------------------------------------------------------------------------
     function enterAndPayPremium(address futureAddress, uint256 premiumAmount) external {
         require(isKnownClone[futureAddress], "Unknown future");
@@ -236,28 +325,21 @@ contract FuturesBook {
 
         FuturesMeta storage meta = futuresMetadata[futureAddress];
 
-        // Allow entry if exactly one side is vacant
         bool longVacant = (meta.long == address(0));
         bool shortVacant = (meta.short == address(0));
         require(longVacant || shortVacant, "Already entered");
 
-        // Pre-fill the vacant side for UX (will be overwritten by instance values below)
         if (longVacant && !shortVacant) {
-            // maker is short → entrant is long
             meta.long = msg.sender;
         } else if (shortVacant && !longVacant) {
-            // maker is long → entrant is short
             meta.short = msg.sender;
         } else {
-            // (defensive) both vacant → default entrant is long
             meta.long = msg.sender;
         }
 
-        // Let the instance assign roles based on maker intent
         (bool okEnter, ) = futureAddress.call(abi.encodeWithSignature("enterAsLong(address)", msg.sender));
         require(okEnter, "enterAsLong failed");
 
-        // Read final roles + expiry from the instance (source of truth)
         (bool okL, bytes memory dataL) = futureAddress.call(abi.encodeWithSignature("long()"));
         require(okL, "long() failed");
         address finalLong = abi.decode(dataL, (address));

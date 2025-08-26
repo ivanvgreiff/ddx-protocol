@@ -13,6 +13,7 @@ import OptionPayoffChart from '@/components/OptionPayoffChart'
 
 // Real wallet context hook
 import { useWallet } from "@/components/wallet-context"
+import { COLORS } from "@/lib/colors"
 
 // Real data fetching hook
 const useQuery = (key: string, fetchFn: () => Promise<any>, options?: any) => {
@@ -70,6 +71,12 @@ export default function FutureDetailPage() {
   const contractAddress = params?.contractAddress as string
   const { account, sendTransaction } = useWallet()
   const [isLoading, setIsLoading] = useState(false)
+
+  // Color constants (imported from central colors file)
+  const LONG_COLOR = COLORS.LONG
+  const SHORT_COLOR = COLORS.SHORT
+  const NEUTRAL_COLOR = COLORS.NEUTRAL
+  const TEXT_ON_COLOR = COLORS.TEXT_ON_COLOR
   const [currentTime, setCurrentTime] = useState(Date.now())
 
   // Update current time every second for real-time countdown
@@ -261,20 +268,20 @@ export default function FutureDetailPage() {
                 style={(() => {
                   if (status.class === 'exercised') {
                     return {
-                      backgroundColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5',
-                      color: '#000000',
-                      borderColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5'
+                      backgroundColor: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,
+                      color: TEXT_ON_COLOR,
+                      borderColor: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR
                     }
                   } else if (status.class === 'reclaimed') {
                     return {
-                      backgroundColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5',
-                      color: '#000000',
-                      borderColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5'
+                      backgroundColor: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,
+                      color: TEXT_ON_COLOR,
+                      borderColor: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR
                     }
                   } else if (status.class === 'expired') {
                     return {
                       backgroundColor: 'transparent',
-                      color: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5',
+                      color: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,
                       border: 'none'
                     }
                   }
@@ -356,9 +363,9 @@ export default function FutureDetailPage() {
               variant="outline"
               className="text-lg px-4 py-2"
               style={{
-                backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
-                color: '#000000',
-                borderColor: isShortPosition ? '#FFAD00' : '#39FF14'
+                backgroundColor: isShortPosition ? SHORT_COLOR : LONG_COLOR,
+                color: TEXT_ON_COLOR,
+                borderColor: isShortPosition ? SHORT_COLOR : LONG_COLOR
               }}
             >
               Your Position: {isShortPosition ? 'Short' : 'Long'}

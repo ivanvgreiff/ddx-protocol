@@ -1234,9 +1234,13 @@ app.get('/api/factory/all-futures', async (req, res) => {
           return {
             address: meta.futureAddress,
             type: 'future',
-            contractType: meta.payoffType === 'PowerFiniteFutures' ? 'POWER_FINITE_FUTURES' : 'LINEAR_FINITE_FUTURES',
-            payoffType: meta.payoffType === 'PowerFiniteFutures' ? 'Power' : 'Linear',
+            contractType: meta.payoffType === 'PowerFiniteFutures' ? 'POWER_FINITE_FUTURES' : 
+                         meta.payoffType === 'SigmoidFiniteFutures' ? 'SIGMOID_FINITE_FUTURES' : 'LINEAR_FINITE_FUTURES',
+            payoffType: meta.payoffType === 'PowerFiniteFutures' ? 'Power' : 
+                       meta.payoffType === 'SigmoidFiniteFutures' ? 'Sigmoid' : 'Linear',
             payoffPower: meta.payoffPower || 1,
+            // Sigmoid intensity will be read separately for sigmoid contracts
+            sigmoidIntensity: undefined,
             short: actualShort,
             long: actualLong,
             isFunded,
@@ -1265,6 +1269,24 @@ app.get('/api/factory/all-futures', async (req, res) => {
     
     // Filter out null entries (failed metadata fetches)
     const validFutures = futuresMetadata.filter(meta => meta !== null);
+    
+    // Read sigmoid intensities for sigmoid contracts
+    for (const future of validFutures) {
+      if (future.payoffType === 'Sigmoid') {
+        try {
+          // Create contract instance for the sigmoid futures contract
+          const sigmoidContract = new ethers.Contract(future.address, [
+            'function sigmoidIntensity1e18() view returns (uint256)'
+          ], provider);
+          
+          const intensity1e18 = await sigmoidContract.sigmoidIntensity1e18();
+          future.sigmoidIntensity = parseFloat(ethers.formatUnits(intensity1e18.toString(), 18));
+        } catch (error) {
+          console.warn(`Failed to read sigmoid intensity for ${future.address}:`, error.message);
+          future.sigmoidIntensity = 1.0; // Default fallback
+        }
+      }
+    }
     
     // Debug: Log the data structure to identify BigInt fields
     console.log('📊 Futures data structure debug:', JSON.stringify(validFutures, (key, value) =>
@@ -1365,10 +1387,29 @@ app.get('/api/futures/:contractAddress', async (req, res) => {
       isResolved: futuresMeta.isResolved,
       needsResolution,
       resolutionStatus,
-      contractType: futuresMeta.payoffType === 'PowerFiniteFutures' ? 'POWER_FINITE_FUTURES' : 'LINEAR_FINITE_FUTURES',
-      payoffType: futuresMeta.payoffType === 'PowerFiniteFutures' ? 'Power' : 'Linear',
-      payoffPower: futuresMeta.payoffPower || 1
+      contractType: futuresMeta.payoffType === 'PowerFiniteFutures' ? 'POWER_FINITE_FUTURES' : 
+                   futuresMeta.payoffType === 'SigmoidFiniteFutures' ? 'SIGMOID_FINITE_FUTURES' : 'LINEAR_FINITE_FUTURES',
+      payoffType: futuresMeta.payoffType === 'PowerFiniteFutures' ? 'Power' : 
+                 futuresMeta.payoffType === 'SigmoidFiniteFutures' ? 'Sigmoid' : 'Linear',
+      payoffPower: futuresMeta.payoffPower || 1,
+      sigmoidIntensity: undefined // Will be set below for sigmoid contracts
     };
+
+    // Read sigmoid intensity for sigmoid contracts
+    if (responseData.payoffType === 'Sigmoid') {
+      try {
+        // Create contract instance for the sigmoid futures contract
+        const sigmoidContract = new ethers.Contract(contractAddress, [
+          'function sigmoidIntensity1e18() view returns (uint256)'
+        ], provider);
+        
+        const intensity1e18 = await sigmoidContract.sigmoidIntensity1e18();
+        responseData.sigmoidIntensity = parseFloat(ethers.formatUnits(intensity1e18.toString(), 18));
+      } catch (error) {
+        console.warn(`Failed to read sigmoid intensity for ${contractAddress}:`, error.message);
+        responseData.sigmoidIntensity = 1.0; // Default fallback
+      }
+    }
 
     // Convert any remaining BigInt values to strings
     const sanitizedResponse = {};
@@ -1484,7 +1525,7 @@ app.post('/api/futures/create-future', async (req, res) => {
       value: '0x0'
     };
     
-    // Prepare transaction data - choose between Linear and Power futures
+    // Prepare transaction data - choose between Linear, Power, and Sigmoid futures
     let createData;
     if (payoffType === 'Power') {
       // Validate power parameter for Power futures
@@ -1507,6 +1548,31 @@ app.post('/api/futures/create-future', async (req, res) => {
         makerIsLong,
         expirySecondsValue,
         power // payoff power parameter
+      ]);
+    } else if (payoffType === 'Sigmoid') {
+      // Validate intensity parameter for Sigmoid futures
+      const intensity = parseFloat(req.body.sigmoidIntensity) || 1.0;
+      if (intensity <= 0 || intensity > 100) {
+        return res.status(400).json({ 
+          error: 'Invalid sigmoid intensity: must be between 0.1 and 100' 
+        });
+      }
+      
+      // Convert intensity to 1e18 scaled value
+      const intensity1e18 = ethers.parseUnits(intensity.toString(), 18);
+      
+      createData = futuresBookContract.interface.encodeFunctionData('createAndFundSigmoidFuture', [
+        underlyingToken,
+        strikeToken,
+        underlyingSymbol,
+        strikeSymbol,
+        optionSizeWei, // _positionSize parameter
+        0, // premium must be 0 for futures
+        oracle,
+        strikeNotional,
+        makerIsLong,
+        expirySecondsValue,
+        intensity1e18 // sigmoid intensity parameter (1e18 scaled)
       ]);
     } else {
       // Default to Linear futures

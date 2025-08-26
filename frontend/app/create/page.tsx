@@ -83,6 +83,7 @@ export default function CreateOptionPage() {
   const [optionType, setOptionType] = useState('call')
   const [payoffType, setPayoffType] = useState('Linear')
   const [payoffPower, setPayoffPower] = useState('2') // For power payoffs
+  const [sigmoidIntensity, setSigmoidIntensity] = useState('1.0') // For sigmoid payoffs
   const [makerSide, setMakerSide] = useState('short') // 'long' or 'short' - only for futures
   const [expirySeconds, setExpirySeconds] = useState('300') // Default 5 minutes for futures
   const [isCreating, setIsCreating] = useState(false)
@@ -147,6 +148,7 @@ export default function CreateOptionPage() {
         userAddress: account,
         payoffType: payoffType,
         payoffPower: payoffPower,
+        sigmoidIntensity: sigmoidIntensity,
         ...(contractType === 'future' && {
           makerSide: makerSide,
           expirySeconds: expirySeconds || '300'
@@ -549,7 +551,10 @@ export default function CreateOptionPage() {
                           <SelectItem value="Logarithmic">Logarithmic</SelectItem>
                         </>
                       ) : (
-                        <SelectItem value="Power">Power</SelectItem>
+                        <>
+                          <SelectItem value="Power">Power</SelectItem>
+                          <SelectItem value="Sigmoid">Sigmoid</SelectItem>
+                        </>
                       )}
                     </SelectContent>
                   </Select>
@@ -572,6 +577,27 @@ export default function CreateOptionPage() {
                   />
                   <p className="text-sm text-muted-foreground mt-1">
                     Power for the payoff function (1-100). Higher powers create more curved payoffs.
+                  </p>
+                </div>
+              )}
+
+              {/* Intensity input for Sigmoid futures */}
+              {contractType === 'future' && payoffType === 'Sigmoid' && (
+                <div>
+                  <Label htmlFor="sigmoidIntensity">Sigmoid Intensity</Label>
+                  <Input
+                    id="sigmoidIntensity"
+                    type="number"
+                    step="0.1"
+                    value={sigmoidIntensity}
+                    onChange={(e) => setSigmoidIntensity(e.target.value)}
+                    placeholder="1.0"
+                    min="0.1"
+                    max="100"
+                    required
+                  />
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Intensity for the sigmoid function (0.1-100). Higher intensity creates steeper curves around the strike price.
                   </p>
                 </div>
               )}

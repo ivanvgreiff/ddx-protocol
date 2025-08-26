@@ -11,6 +11,7 @@ import { TrendingUp, DollarSign, Eye, AlertTriangle } from 'lucide-react'
 import OptionPayoffChart from "@/components/OptionPayoffChart"
 
 import { useWallet } from "@/components/wallet-context"
+import { COLORS } from "@/lib/colors"
 
 // Real data fetching hook
 const useQuery = (key: string, fetchFn: () => Promise<any>, options?: any) => {
@@ -71,6 +72,12 @@ export default function MyOptionsPage() {
   const { account, sendTransaction } = useWallet()
   const [filter, setFilter] = useState('all')
   const [currentTime, setCurrentTime] = useState(Date.now())
+
+  // Color constants (imported from central colors file)
+  const LONG_COLOR = COLORS.LONG
+  const SHORT_COLOR = COLORS.SHORT
+  const NEUTRAL_COLOR = COLORS.NEUTRAL_OPTIONS
+  const TEXT_ON_COLOR = COLORS.TEXT_ON_COLOR
 
   // Update current time every second for real-time countdown
   useEffect(() => {
@@ -534,9 +541,9 @@ export default function MyOptionsPage() {
                         <Badge
                           variant="outline"
                           style={{
-                            backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
+                            backgroundColor: isShortPosition ? SHORT_COLOR : LONG_COLOR,
                             color: isShortPosition ? '#000000' : '#000000',
-                            borderColor: isShortPosition ? '#FFAD00' : '#39FF14'
+                            borderColor: isShortPosition ? SHORT_COLOR : LONG_COLOR
                           }}
                         >
                           {isShortPosition ? 'Short' : 'Long'}
@@ -549,13 +556,13 @@ export default function MyOptionsPage() {
                                   status.class === 'reclaimed' ? 'outline' : 'outline'}
                           style={
                             status.class === 'exercised' ? {
-                              backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
-                              color: '#000000',
-                              borderColor: isShortPosition ? '#FFAD00' : '#39FF14'
+                              backgroundColor: isShortPosition ? SHORT_COLOR : LONG_COLOR,
+                              color: TEXT_ON_COLOR,
+                              borderColor: isShortPosition ? SHORT_COLOR : LONG_COLOR
                             } : status.class === 'reclaimed' ? {
-                              backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
-                              color: '#000000',
-                              borderColor: isShortPosition ? '#FFAD00' : '#39FF14'
+                              backgroundColor: isShortPosition ? SHORT_COLOR : LONG_COLOR,
+                              color: TEXT_ON_COLOR,
+                              borderColor: isShortPosition ? SHORT_COLOR : LONG_COLOR
                             } : undefined
                           }
                         >
@@ -651,9 +658,9 @@ export default function MyOptionsPage() {
                           size="sm"
                           className="flex-1"
                           style={{
-                            backgroundColor: isLongPosition ? '#39FF14' : '#FFAD00',
-                            color: '#000000',
-                            border: `1px solid ${isLongPosition ? '#39FF14' : '#FFAD00'}`,
+                            backgroundColor: isLongPosition ? LONG_COLOR : SHORT_COLOR,
+                            color: TEXT_ON_COLOR,
+                            border: `1px solid ${isLongPosition ? LONG_COLOR : SHORT_COLOR}`,
                             transition: 'all 0.3s ease'
                           }}
                           onMouseEnter={(e) => {
@@ -674,9 +681,9 @@ export default function MyOptionsPage() {
                           size="sm"
                           className="flex-1"
                           style={{
-                            backgroundColor: isShortPosition ? '#FFAD00' : '#39FF14',
-                            color: '#000000',
-                            border: `1px solid ${isShortPosition ? '#FFAD00' : '#39FF14'}`,
+                            backgroundColor: isShortPosition ? SHORT_COLOR : LONG_COLOR,
+                            color: TEXT_ON_COLOR,
+                            border: `1px solid ${isShortPosition ? SHORT_COLOR : LONG_COLOR}`,
                             transition: 'all 0.3s ease'
                           }}
                           onMouseEnter={(e) => {

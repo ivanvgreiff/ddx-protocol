@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo } from "react";
+import { COLORS } from "@/lib/colors";
 import {
   ResponsiveContainer,
   LineChart,
@@ -20,7 +21,7 @@ import {
  */
 
 export type OptionType = "CALL" | "PUT";
-export type PayoffType = "Linear" | "Quadratic" | "Logarithmic" | "Power";
+export type PayoffType = "Linear" | "Quadratic" | "Logarithmic" | "Power" | "Sigmoid";
 
 export type OptionPayoffChartProps = {
   optionType: OptionType;
@@ -53,12 +54,14 @@ export type OptionPayoffChartProps = {
   isFuturesContract?: boolean;
   /** Power for Power payoff type (default 2) */
   payoffPower?: number;
+  /** Intensity for Sigmoid payoff type (default 1.0) */
+  sigmoidIntensity?: number;
 };
 
-const NEON_GREEN = "#39FF14"; // neon green payoff line for long positions
-const NEON_ORANGE = "#FFAD00"; // FFAD00
-const NEON_PINK = "#ff1493"; // neon pink payoff line for non-user contracts
-const NEON_INDIGO = "#4f46e5"; // indigo for futures contracts
+const NEON_GREEN = COLORS.LONG; // neon green payoff line for long positions
+const NEON_ORANGE = COLORS.SHORT; // neon orange
+const NEON_PINK = COLORS.NEUTRAL_OPTIONS; // neon pink payoff line for non-user contracts (options)
+const NEON_INDIGO = COLORS.NEUTRAL; // indigo for futures contracts
 const GRID_COLOR = "hsl(var(--border) / 0.25)"; // subtle grid per design system
 // Use theme-aware colors that work in both light and dark modes
 const AXIS_COLOR = "rgb(229 231 235)"; // gray-200 for light backgrounds, visible on dark
@@ -90,12 +93,17 @@ function fromUnits(value: string | undefined, decimals = 18): number | undefined
   }
 }
 
+function sigmoid(x: number): number {
+  return 1 / (1 + Math.exp(-x));
+}
+
 function payoff(
   payoffType: PayoffType,
   optionType: OptionType,
   spotPrice: number,
   K: number,
-  power: number = 2
+  power: number = 2,
+  intensity: number = 1.0
 ): number {
   switch (payoffType) {
     case "Linear":
@@ -107,6 +115,13 @@ function payoff(
     case "Power":
       const diff = Math.abs(spotPrice - K);
       return Math.pow(diff, power);
+    case "Sigmoid":
+      // Sigmoid payoff: |sigmoid(I*(S-K)) - 0.5| * 2 * notional
+      // For futures: notional = K (strike price as it represents the contract value)
+      const z = intensity * (spotPrice - K);
+      const sigmoidValue = sigmoid(z);
+      const delta = Math.abs(sigmoidValue - 0.5);
+      return delta * 2 * K; // Using K as notional for display purposes
     case "Logarithmic":
       if (optionType === "CALL") {
         // Logarithmic Call Beta Variant: P = S * log(I(x-K + 1/I)) if x >= K, else 0
@@ -167,6 +182,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
     isNonUserContract = false,
     isFuturesContract = false,
     payoffPower = 2,
+    sigmoidIntensity = 1.0,
   } = props;
 
   const K = fromUnits(strikePrice, decimals) ?? 0;
@@ -224,18 +240,44 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
               value = 0; // No change at strike
             }
           }
+        } else if (payoffType === 'Sigmoid') {
+          // Sigmoid Futures: Asymmetric directional sigmoid payoffs
+          const z = sigmoidIntensity * (S - K);
+          const sigmoidValue = sigmoid(z);
+          const delta = Math.abs(sigmoidValue - 0.5);
+          const sigmoidPayoff = delta * 2 * K * size; // K represents notional
+          
+          if (isShortPosition) {
+            // Short wins when S < K, loses when S > K
+            if (S < K) {
+              value = sigmoidPayoff; // Profit
+            } else if (S > K) {
+              value = -sigmoidPayoff; // Loss  
+            } else {
+              value = 0; // No change at strike
+            }
+          } else {
+            // Long wins when S > K, loses when S < K
+            if (S > K) {
+              value = sigmoidPayoff; // Profit
+            } else if (S < K) {
+              value = -sigmoidPayoff; // Loss
+            } else {
+              value = 0; // No change at strike
+            }
+          }
         } else {
           // Linear futures: y = (S - K) * size
           value = (S - K) * size;
         }
       } else {
         // For options contracts: use option payoff logic
-        value = payoff(payoffType, optionType, S, K, payoffPower) * size; // Total payoff (not normalized)
+        value = payoff(payoffType, optionType, S, K, payoffPower, sigmoidIntensity) * size; // Total payoff (not normalized)
       }
       
       // For short positions, invert the payoff to show the seller's perspective
-      // (Skip this for Power futures as they handle position perspective internally)
-      if (isShortPosition && !(isFuturesContract && payoffType === 'Power')) {
+      // (Skip this for Power and Sigmoid futures as they handle position perspective internally)
+      if (isShortPosition && !(isFuturesContract && (payoffType === 'Power' || payoffType === 'Sigmoid'))) {
         value = -value;
       }
       

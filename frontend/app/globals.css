@@ -149,9 +149,9 @@
 
 .neon-outline-indigo:hover {
   box-shadow: 
-    inset 0 0 0 2px #4f46e5,
-    0 0 15px rgba(79, 70, 229, 0.4), 
-    0 0 30px rgba(79, 70, 229, 0.2);
+    inset 0 0 0 2px #817bffff,
+    0 0 15px rgba(129, 123, 255, 0.4), 
+    0 0 30px rgba(129, 123, 255, 0.2);
 }
 
 .neon-button {
