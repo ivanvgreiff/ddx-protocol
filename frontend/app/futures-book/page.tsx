@@ -459,7 +459,7 @@ export default function FuturesBookPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {isLoading ? (
             Array.from({ length: 6 }).map((_, i) => (
-              <Card key={i} className="neon-outline">
+              <Card key={i} className="neon-outline-indigo">
                 <CardHeader>
                   <div className="animate-pulse">
                     <div className="h-6 bg-muted rounded mb-2"></div>
@@ -496,11 +496,11 @@ export default function FuturesBookPage() {
               const canReclaim = future.isActive && isExpired && !future.isExercised && !future.isResolved && isShortPosition
 
               return (
-                <Card key={index} className="neon-outline transition-all duration-300">
+                <Card key={index} className="neon-outline-indigo transition-all duration-300">
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-lg">
-                        {future.payoffType || 'Linear Finite Future'}
+                        Linear Future
                       </CardTitle>
                       <div className="flex gap-2">
                         {(() => {
@@ -534,21 +534,21 @@ export default function FuturesBookPage() {
                             
                             if (status.class === 'exercised') {
                               return {
-                                backgroundColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493',
+                                backgroundColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5',
                                 color: '#000000',
-                                borderColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493'
+                                borderColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5'
                               }
                             } else if (status.class === 'reclaimed') {
                               return {
-                                backgroundColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493',
+                                backgroundColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5',
                                 color: '#000000',
-                                borderColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493'
+                                borderColor: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5'
                               }
                             } else if (status.class === 'expired') {
                               // This covers "Unresolved" status - just text color, no background or border
                               return {
                                 backgroundColor: 'transparent',
-                                color: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493',
+                                color: isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5',
                                 border: 'none'
                               }
                             }
@@ -563,7 +563,7 @@ export default function FuturesBookPage() {
                   <CardContent className="space-y-3">
                     <div className="grid grid-cols-2 gap-2 text-sm">
                       <div>
-                        <span className="text-muted-foreground">Entry Price:</span>
+                        <span className="text-muted-foreground">Strike Price:</span>
                         <div className="font-medium">{future.strikePrice ? formatTokenAmount(future.strikePrice, future.strikeSymbol || 'MTK') : 'Set on activation'}</div>
                       </div>
                       <div>
@@ -571,8 +571,18 @@ export default function FuturesBookPage() {
                         <div className="font-medium">{formatTokenAmount(future.optionSize, future.underlyingSymbol || '2TK')}</div>
                       </div>
                       <div>
-                        <span className="text-muted-foreground">Premium:</span>
-                        <div className="font-medium">No Premium</div>
+                        <span className="text-muted-foreground">Lifestyle:</span>
+                        <div className="font-medium">
+                          {(() => {
+                            // Determine lifestyle based on contract type
+                            // For now, LinearFiniteFutures is "Finite", future LinearPerpetualFutures will be "Perpetual"
+                            const contractType = future.contractType || future.payoffType || 'LinearFiniteFutures'
+                            if (contractType.toLowerCase().includes('perpetual')) {
+                              return 'Perpetual'
+                            }
+                            return 'Finite'
+                          })()}
+                        </div>
                       </div>
                       <div>
                         <span className="text-muted-foreground">Expiry:</span>
@@ -580,30 +590,48 @@ export default function FuturesBookPage() {
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <span className="text-muted-foreground text-sm">Price Movement P&L:</span>
+                    <div className="text-sm">
+                      <span className="text-muted-foreground">Price of {future.underlyingSymbol || '2TK'} at Expiry:</span>
+                      <div className="font-medium">
+                        {(() => {
+                          const isExpired = future.expiry && future.expiry * 1000 < currentTime
+                          if (!isExpired) {
+                            return 'Not yet expired'
+                          } else if (future.isResolved) {
+                            return formatTokenAmount(future.priceAtExpiry, future.strikeSymbol || 'MTK')
+                          } else {
+                            return '? MTK'
+                          }
+                        })()} 
+                      </div>
+                    </div>
+
+                    {/* Future Payoff Chart */}
+                    <div className="mt-4 mb-2 flex justify-center">
                       <OptionPayoffChart
                         optionType="CALL"
                         payoffType="Linear"
                         strikePrice={future.strikePrice || "1000000000000000000"}
                         optionSize={future.optionSize}
-                        premium="0"
+                        strikeSymbol={future.strikeSymbol || 'MTK'}
+                        underlyingSymbol={future.underlyingSymbol || '2TK'}
                         currentSpotPrice={future.currentPrice}
                         decimals={18}
                         compact={true}
                         className="h-48"
                         isShortPosition={account && future.short && account.toLowerCase() === future.short.toLowerCase()}
                         isNonUserContract={!account || (!future.short || account.toLowerCase() !== future.short.toLowerCase()) && (!future.long || account.toLowerCase() !== future.long.toLowerCase())}
+                        isFuturesContract={true}
                       />
                     </div>
 
                     <div className="flex gap-2 pt-4">
-                      {!future.isActive && (() => {
+                      {!future.isActive && !isLongPosition && !isShortPosition && (() => {
                         const isNonUserContract = !account || 
                           (!future.short || account.toLowerCase() !== future.short.toLowerCase()) && 
                           (!future.long || account.toLowerCase() !== future.long.toLowerCase())
                         
-                        const buttonColor = isNonUserContract ? '#ff1493' : '#39FF14'
+                        const buttonColor = isNonUserContract ? '#4f46e5' : '#39FF14'
                         
                         return (
                           <Button
@@ -617,8 +645,8 @@ export default function FuturesBookPage() {
                             }}
                             onMouseEnter={(e) => {
                               if (isNonUserContract) {
-                                // For non-user contracts, keep the pink color animation
-                                e.currentTarget.style.background = '#ff1493'
+                                // For non-user contracts, keep the indigo color animation
+                                e.currentTarget.style.background = '#4f46e5'
                                 e.currentTarget.style.opacity = '0.9'
                                 e.currentTarget.style.transform = 'scale(1.05)'
                               } else {
@@ -759,7 +787,7 @@ export default function FuturesBookPage() {
                         const isShortPosition = future.short && account && future.short.toLowerCase() === account.toLowerCase()
                         const isNonUserContract = !isLongPosition && !isShortPosition
                         
-                        const buttonColor = isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#ff1493'
+                        const buttonColor = isShortPosition ? '#FFAD00' : isLongPosition ? '#39FF14' : '#4f46e5'
                         
                         return (
                           <Button

@@ -5,11 +5,14 @@ import "@openzeppelin/contracts/proxy/Clones.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./LinearFiniteFutures.sol";
+import "./PowerFiniteFutures.sol";
 
 contract FuturesBook {
     using SafeERC20 for IERC20;
 
-    address public futuresImpl;
+    // Implementation addresses
+    address public futuresImpl;        // linear impl
+    address public powerFuturesImpl;   // power impl
 
     address[] public futuresContracts;
 
@@ -25,12 +28,9 @@ contract FuturesBook {
         string underlyingSymbol;
         string strikeSymbol;
 
-        // strikePrice stores the FIXED strike determined from funding (1e18)
-        uint256 strikePrice;
-        // optionSize stores QUANTITY (1e18 underlying units)
-        uint256 optionSize;
-        // premium kept for parity; always 0 for futures
-        uint256 premium;
+        uint256 strikePrice;   // fixed strike determined from funding
+        uint256 optionSize;    // quantity (1e18 units)
+        uint256 premium;       // always 0 for futures
 
         uint256 expiry;
         uint256 priceAtExpiry;
@@ -41,47 +41,42 @@ contract FuturesBook {
         address long;
         address short;
 
-        string payoffType; // "LinearFiniteFutures"
+        string payoffType;     // "LinearFiniteFutures" or "PowerFiniteFutures"
+        uint8 payoffPower;     // 1 for linear, N>=1 for power
     }
 
     mapping(address => FuturesMeta) public futuresMetadata;
 
-    event FutureCreated(
+    // Events (renamed for clarity)
+    event LinearFuturesCreated(
         address indexed creator,
         address indexed instance,
-        string futureType,
         bool makerIsLong,
         uint256 strikeNotional,
         uint256 optionSize
     );
+
+    event PowerFuturesCreated(
+        address indexed creator,
+        address indexed instance,
+        bool makerIsLong,
+        uint256 strikeNotional,
+        uint256 optionSize,
+        uint8 payoffPower
+    );
+
+    // Shared events (apply to both types)
     event FutureActivated(address indexed instance, address indexed long, address indexed short, uint256 expiry);
     event FutureExercised(address indexed instance, uint256 strikeTokenAmount);
 
-    constructor(address _futuresImpl) {
+    constructor(address _futuresImpl, address _powerFuturesImpl) {
         futuresImpl = _futuresImpl;
+        powerFuturesImpl = _powerFuturesImpl;
     }
 
-    /**
-     * @notice Maker creates and funds a futures contract (no premiums, no collateral matching).
-     *
-     * Funding rules (mirrors Options model):
-     * - If maker wants LONG  → maker funds with STRIKE tokens equal to strikeNotional (= desiredStrike * optionSize).
-     * - If maker wants SHORT → maker funds with UNDERLYING tokens equal to optionSize.
-     *
-     * The fixed strike is computed from the given strikeNotional:
-     *   strikePrice = (strikeNotional * 1e18) / optionSize
-     *
-     * @param _underlyingToken  ERC20 of the underlying
-     * @param _strikeToken      ERC20 of the strike token (e.g., USDC)
-     * @param _underlyingSymbol Symbol string used by the oracle
-     * @param _strikeSymbol     Symbol string used by the oracle
-     * @param _optionSize       size in 1e18 underlying units
-     * @param _premiumMustBe0   must be 0 for futures
-     * @param _oracle           oracle address
-     * @param _strikeNotional   amount in strike tokens used to compute strike (desiredStrike * optionSize)
-     * @param _makerIsLong      whether the maker wants to be the long at activation
-     * @param _expirySeconds    maker-chosen time-to-expiry applied when the counterparty enters
-     */
+    // ------------------------------------------------------------------------
+    // LINEAR FUTURES
+    // ------------------------------------------------------------------------
     function createAndFundLinearFuture(
         address _underlyingToken,
         address _strikeToken,
@@ -95,52 +90,44 @@ contract FuturesBook {
         uint256 _expirySeconds
     ) external returns (address clone) {
         require(_premiumMustBe0 == 0, "FUT: premium must be 0");
-        require(_optionSize > 0, "FUT: size=0");
-        require(_strikeNotional > 0, "FUT: strikeNotional=0");
-        require(_expirySeconds > 0, "FUT: expirySeconds=0");
 
         clone = Clones.clone(futuresImpl);
 
-        // Initialize (flag only for side; strike set on fund)
         LinearFiniteFutures(clone).initialize(
-            msg.sender, // maker recorded as initial "short" var for parity
+            msg.sender,
             _underlyingToken,
             _strikeToken,
             _underlyingSymbol,
             _strikeSymbol,
             _makerIsLong ? 1 : 0,
             _optionSize,
-            0, // premium is always 0 for futures
+            0,
             _oracle,
             address(this)
         );
 
-        // Pull maker funding into the instance:
+        // Pull maker funding
         if (_makerIsLong) {
-            // LONG maker funds with STRIKE tokens (strikeNotional)
             IERC20(_strikeToken).safeTransferFrom(msg.sender, clone, _strikeNotional);
         } else {
-            // SHORT maker funds with UNDERLYING tokens (optionSize)
             IERC20(_underlyingToken).safeTransferFrom(msg.sender, clone, _optionSize);
         }
 
-        // Tell the instance to finalize funding, fix the strike, and store maker's desired expiry seconds.
         LinearFiniteFutures(clone).fund(_strikeNotional, _expirySeconds);
+
+        uint256 fixedStrike = _readStrike(clone);
 
         futuresContracts.push(clone);
         isKnownClone[clone] = true;
-
-        // Temporarily set maker as short; true mapping is fixed after enter()
         shortPosition[clone] = msg.sender;
 
-        // Record metadata now (strikePrice will be read after activation to stay consistent)
         futuresMetadata[clone] = FuturesMeta({
             futureAddress: clone,
             underlyingToken: _underlyingToken,
             strikeToken: _strikeToken,
             underlyingSymbol: _underlyingSymbol,
             strikeSymbol: _strikeSymbol,
-            strikePrice: 0, // will read from instance after enter
+            strikePrice: fixedStrike,
             optionSize: _optionSize,
             premium: 0,
             expiry: 0,
@@ -150,16 +137,91 @@ contract FuturesBook {
             isResolved: false,
             long: address(0),
             short: msg.sender,
-            payoffType: "LinearFiniteFutures"
+            payoffType: "LinearFiniteFutures",
+            payoffPower: 1
         });
 
-        emit FutureCreated(msg.sender, clone, "LINEAR_FUT", _makerIsLong, _strikeNotional, _optionSize);
+        emit LinearFuturesCreated(msg.sender, clone, _makerIsLong, _strikeNotional, _optionSize);
     }
 
-    /**
-     * @notice Counterparty enters. For futures, premium is always 0.
-     * Keep the same signature style as options but the amount must be 0.
-     */
+    // ------------------------------------------------------------------------
+    // POWER FUTURES
+    // ------------------------------------------------------------------------
+    function createAndFundPowerFuture(
+        address _underlyingToken,
+        address _strikeToken,
+        string memory _underlyingSymbol,
+        string memory _strikeSymbol,
+        uint256 _optionSize,
+        uint256 _premiumMustBe0,
+        address _oracle,
+        uint256 _strikeNotional,
+        bool _makerIsLong,
+        uint256 _expirySeconds,
+        uint8 _power
+    ) external returns (address clone) {
+        require(_premiumMustBe0 == 0, "FUT: premium must be 0");
+        require(_power >= 1, "FUT: invalid power");
+
+        clone = Clones.clone(powerFuturesImpl);
+
+        PowerFiniteFutures(clone).initialize(
+            msg.sender,
+            _underlyingToken,
+            _strikeToken,
+            _underlyingSymbol,
+            _strikeSymbol,
+            _makerIsLong ? 1 : 0,
+            _optionSize,
+            0,
+            _oracle,
+            address(this)
+        );
+
+        // Set payoff power before funding
+        PowerFiniteFutures(clone).setPayoffPower(_power);
+
+        // Pull maker funding
+        if (_makerIsLong) {
+            IERC20(_strikeToken).safeTransferFrom(msg.sender, clone, _strikeNotional);
+        } else {
+            IERC20(_underlyingToken).safeTransferFrom(msg.sender, clone, _optionSize);
+        }
+
+        PowerFiniteFutures(clone).fund(_strikeNotional, _expirySeconds);
+
+        uint256 fixedStrike = _readStrike(clone);
+
+        futuresContracts.push(clone);
+        isKnownClone[clone] = true;
+        shortPosition[clone] = msg.sender;
+
+        futuresMetadata[clone] = FuturesMeta({
+            futureAddress: clone,
+            underlyingToken: _underlyingToken,
+            strikeToken: _strikeToken,
+            underlyingSymbol: _underlyingSymbol,
+            strikeSymbol: _strikeSymbol,
+            strikePrice: fixedStrike,
+            optionSize: _optionSize,
+            premium: 0,
+            expiry: 0,
+            priceAtExpiry: 0,
+            exercisedAmount: 0,
+            isExercised: false,
+            isResolved: false,
+            long: address(0),
+            short: msg.sender,
+            payoffType: "PowerFiniteFutures",
+            payoffPower: _power
+        });
+
+        emit PowerFuturesCreated(msg.sender, clone, _makerIsLong, _strikeNotional, _optionSize, _power);
+    }
+
+    // ------------------------------------------------------------------------
+    // SHARED LOGIC
+    // ------------------------------------------------------------------------
     function enterAndPayPremium(address futureAddress, uint256 premiumAmount) external {
         require(isKnownClone[futureAddress], "Unknown future");
         require(premiumAmount == 0, "FUT: premium must be 0");
@@ -167,16 +229,10 @@ contract FuturesBook {
         FuturesMeta storage meta = futuresMetadata[futureAddress];
         require(meta.long == address(0), "Already entered");
 
-        // Tentative long = msg.sender (instance will assign roles per maker flag)
         meta.long = msg.sender;
 
-        // Activate in the instance (no token movement here)
-        LinearFiniteFutures(futureAddress).enterAsLong(msg.sender);
-
-        // Sync metadata from instance
-        (bool okP, bytes memory dataP) = futureAddress.call(abi.encodeWithSignature("strikePrice()"));
-        require(okP, "strikePrice() failed");
-        meta.strikePrice = abi.decode(dataP, (uint256));
+        (bool okEnter, ) = futureAddress.call(abi.encodeWithSignature("enterAsLong(address)", msg.sender));
+        require(okEnter, "enterAsLong failed");
 
         (bool okL, bytes memory dataL) = futureAddress.call(abi.encodeWithSignature("long()"));
         require(okL, "long() failed");
@@ -204,7 +260,6 @@ contract FuturesBook {
         require(isKnownClone[futureAddress], "Unknown future");
 
         FuturesMeta storage meta = futuresMetadata[futureAddress];
-        // Either party may trigger settlement per your spec ("Either party can call resolveAndExercise()")
         require(msg.sender == meta.long || msg.sender == meta.short, "Not a party");
 
         if (!meta.isResolved) {
@@ -243,10 +298,6 @@ contract FuturesBook {
         require(s2, "reclaim() failed");
     }
 
-    /**
-     * Instance reports absolute payout in strike token.
-     * We move funds loser → winner by pulling from the payer and forwarding to receiver.
-     */
     function notifyExercised(uint256 strikeTokenAmount) external {
         require(isKnownClone[msg.sender], "Unknown future");
 
@@ -268,8 +319,13 @@ contract FuturesBook {
         emit FutureExercised(msg.sender, strikeTokenAmount);
     }
 
-    function isKnownFuture(address query) public view returns (bool) {
-        return isKnownClone[query];
+    // Helpers
+    function _readStrike(address future) internal view returns (uint256 strike) {
+        (bool ok, bytes memory data) = future.staticcall(
+            abi.encodeWithSignature("strikePrice()")
+        );
+        require(ok && data.length == 32, "read strike failed");
+        strike = abi.decode(data, (uint256));
     }
 
     function getAllFutures() external view returns (address[] memory) {

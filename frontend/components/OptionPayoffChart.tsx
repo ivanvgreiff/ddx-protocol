@@ -49,11 +49,14 @@ export type OptionPayoffChartProps = {
   isShortPosition?: boolean;
   /** Show neutral perspective with neon pink for non-user contracts */
   isNonUserContract?: boolean;
+  /** For futures contracts - changes diagonal line behavior */
+  isFuturesContract?: boolean;
 };
 
 const NEON_GREEN = "#39FF14"; // neon green payoff line for long positions
 const NEON_ORANGE = "#FFAD00"; // FFAD00
 const NEON_PINK = "#ff1493"; // neon pink payoff line for non-user contracts
+const NEON_INDIGO = "#4f46e5"; // indigo for futures contracts
 const GRID_COLOR = "hsl(var(--border) / 0.25)"; // subtle grid per design system
 // Use theme-aware colors that work in both light and dark modes
 const AXIS_COLOR = "rgb(229 231 235)"; // gray-200 for light backgrounds, visible on dark
@@ -156,6 +159,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
     compact = false,
     isShortPosition = false,
     isNonUserContract = false,
+    isFuturesContract = false,
   } = props;
 
   const K = fromUnits(strikePrice, decimals) ?? 0;
@@ -198,10 +202,19 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
       
       // Guard against NaN in calculated values
       if (Number.isFinite(S) && Number.isFinite(value)) {
-        let diagonalValue = optionType === "CALL" ? (S >= K ? (S - K) * size : undefined) : (S <= K ? (K - S) * size : undefined);
-        // Also invert diagonal for short positions
-        if (isShortPosition && diagonalValue !== undefined) {
-          diagonalValue = -diagonalValue;
+        let diagonalValue;
+        
+        if (isFuturesContract) {
+          // For futures: y = x - K (long) or y = -(x - K) (short)
+          const futuresValue = (S - K) * size;
+          diagonalValue = isShortPosition ? -futuresValue : futuresValue;
+        } else {
+          // For options: maintain original behavior
+          diagonalValue = optionType === "CALL" ? (S >= K ? (S - K) * size : undefined) : (S <= K ? (K - S) * size : undefined);
+          // Also invert diagonal for short positions
+          if (isShortPosition && diagonalValue !== undefined) {
+            diagonalValue = -diagonalValue;
+          }
         }
         
         out.push({ 
@@ -212,7 +225,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
       }
     }
     return out;
-  }, [minX, maxX, payoffType, optionType, K, resolution, size, isShortPosition]); // Added isShortPosition to dependencies
+  }, [minX, maxX, payoffType, optionType, K, resolution, size, isShortPosition, isFuturesContract]);
 
   const [yMin, yMax] = useMemo(() => {
     // Determine reasonable Y bounds for nice padding, handling negative values for short positions
@@ -291,7 +304,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
           />
 
           {/* Strike price vertical line (y-axis at strike) - always visible */}
-          {K && Number.isFinite(K) && (
+          {Number.isFinite(K) && (
             <ReferenceLine 
               x={K} 
               stroke="#666666" 
@@ -353,7 +366,11 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
             dataKey="payoff"
             dot={false}
             strokeWidth={2.5}
-            stroke={isNonUserContract ? NEON_PINK : (isShortPosition ? NEON_ORANGE : NEON_GREEN)}
+            stroke={
+              isNonUserContract 
+                ? (isFuturesContract ? NEON_INDIGO : NEON_PINK) 
+                : (isShortPosition ? NEON_ORANGE : NEON_GREEN)
+            }
             className="transition-all duration-300"
             isAnimationActive
           />

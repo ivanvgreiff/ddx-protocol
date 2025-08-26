@@ -142,6 +142,18 @@
     0 0 30px rgba(255, 20, 147, 0.2);
 }
 
+.neon-outline-indigo {
+  box-shadow: inset 0 0 0 2px transparent;
+  transition: box-shadow 0.3s ease-in-out;
+}
+
+.neon-outline-indigo:hover {
+  box-shadow: 
+    inset 0 0 0 2px #4f46e5,
+    0 0 15px rgba(79, 70, 229, 0.4), 
+    0 0 30px rgba(79, 70, 229, 0.2);
+}
+
 .neon-button {
   border: 1px solid hsl(var(--border));
   background: transparent;

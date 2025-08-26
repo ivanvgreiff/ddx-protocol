@@ -178,7 +178,7 @@ export default function CreateOptionPage() {
       }
       
       if (data.success && data.data) {
-        const { approveTransaction, createTransaction, tokenToApprove, amountToApprove, optionsBookAddress } = data.data
+        const { approveTransaction, createTransaction, tokenToApprove, amountToApprove, optionsBookAddress, futuresBookAddress } = data.data
         
         // Step 2: Check current allowance
         toast.dismiss(loadingToast)
@@ -194,7 +194,8 @@ export default function CreateOptionPage() {
           provider
         )
         
-        const currentAllowance = await tokenContract.allowance(account, optionsBookAddress)
+        const bookAddress = contractType === 'future' ? futuresBookAddress : optionsBookAddress
+        const currentAllowance = await tokenContract.allowance(account, bookAddress)
         const requiredAmount = ethers.getBigInt(amountToApprove)
         
         console.log('Current allowance:', ethers.formatUnits(currentAllowance, 18))
