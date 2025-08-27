@@ -133,11 +133,12 @@ export default function FuturesBookPage() {
       return '5 minutes upon activation'
     }
     
-    // If future is engaged, show actual expiry date or countdown
+    // If future is engaged, show countdown or expiry date
     const expiryTime = future.expiry * 1000 // Convert to milliseconds
     const timeRemaining = expiryTime - currentTime
     
-    if (timeRemaining <= 0) {
+    // If expired or exercised, show actual expiry date
+    if (timeRemaining <= 0 || future.isExercised) {
       const expiryDate = new Date(expiryTime)
       return `${expiryDate.toLocaleDateString()} ${expiryDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`
     }
@@ -261,12 +262,13 @@ export default function FuturesBookPage() {
           
           // Notify backend about long entry event
           try {
-            await fetch(`/api/futures/${contractAddress}/long-entered`, {
+            // For futures contracts, expiry should already be set by the contract during creation
+            // We shouldn't override it with a new expiry time based on entry time
+            await fetch(`/api/contracts/${contractAddress}/long-entered`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 longAddress: account,
-                expiry: Math.floor(Date.now() / 1000) + (5 * 60), // 5 minutes from now
                 transactionHash: tx.hash
               })
             })
@@ -338,7 +340,7 @@ export default function FuturesBookPage() {
           await tx.wait()
           
           // Clear cache to get fresh data
-          await fetch('/api/futures/clear-cache', { method: 'POST' })
+          await fetch('/api/factory/clear-cache', { method: 'POST' })
           
           toast.success('Future resolved and funds reclaimed successfully!')
           
@@ -401,7 +403,7 @@ export default function FuturesBookPage() {
           toast.success('✅ Future resolved and exercised successfully!')
           
           // Clear cache to get fresh data
-          await fetch('/api/futures/clear-cache', { method: 'POST' })
+          await fetch('/api/factory/clear-cache', { method: 'POST' })
           
           // Refresh futures data to show updated contract state
           try {
@@ -562,6 +564,13 @@ export default function FuturesBookPage() {
                               }
                             } else if (status.class === 'expired') {
                               // This covers "Unresolved" status - just text color, no background or border
+                              return {
+                                backgroundColor: 'transparent',
+                                color: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,
+                                border: 'none'
+                              }
+                            } else if (status.class === 'not-engaged') {
+                              // This covers "Not Engaged" status - just text color, no background or border
                               return {
                                 backgroundColor: 'transparent',
                                 color: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,

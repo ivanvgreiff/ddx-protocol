@@ -1175,117 +1175,142 @@ app.get('/api/factory/all-futures', async (req, res) => {
       console.log('   - Network mismatch');
     }
     
-    // Get metadata for each futures contract
-    const futuresMetadata = await Promise.all(
-      allFutures.map(async (futureAddress) => {
-        try {
-          const meta = await futuresBookContract.getFuturesMeta(futureAddress);
-          
-          // Determine if the future should be considered active/funded based on long position
-          const hasLongPosition = meta.long && meta.long !== '0x0000000000000000000000000000000000000000';
-          const isFunded = true; // FuturesBook ensures funded contracts
-          const isActive = hasLongPosition;
-          
-          // Check if future is expired and should be resolved
-          const currentTime = Math.floor(Date.now() / 1000);
-          const isExpired = meta.expiry > 0 && currentTime > meta.expiry;
-          const needsResolution = isExpired && !meta.isResolved && !meta.isExercised;
-          
-          // Provide resolution status for frontend
-          let resolutionStatus = 'active';
-          if (!isExpired) {
-            resolutionStatus = 'active';
-          } else if (meta.isResolved) {
-            resolutionStatus = 'resolved';
-          } else if (meta.isExercised) {
-            resolutionStatus = 'exercised';
-          } else {
-            resolutionStatus = 'needs_resolution';
-          }
-          
-          // Fix contract metadata bug: use position mappings when metadata shows zero addresses
-          let actualLong = meta.long;
-          let actualShort = meta.short;
-          
-          if (meta.long === '0x0000000000000000000000000000000000000000') {
-            // Check longPosition mapping
-            try {
-              const longResult = await futuresBookContract.longPosition(meta.futureAddress);
-              if (longResult && longResult !== '0x0000000000000000000000000000000000000000') {
-                actualLong = longResult;
-              }
-            } catch (error) {
-              console.warn('Failed to get longPosition for', meta.futureAddress, error.message);
-            }
-          }
-          
-          if (meta.short === '0x0000000000000000000000000000000000000000') {
-            // Check shortPosition mapping  
-            try {
-              const shortResult = await futuresBookContract.shortPosition(meta.futureAddress);
-              if (shortResult && shortResult !== '0x0000000000000000000000000000000000000000') {
-                actualShort = shortResult;
-              }
-            } catch (error) {
-              console.warn('Failed to get shortPosition for', meta.futureAddress, error.message);
-            }
-          }
-
-          return {
-            address: meta.futureAddress,
-            type: 'future',
-            contractType: meta.payoffType === 'PowerFiniteFutures' ? 'POWER_FINITE_FUTURES' : 
-                         meta.payoffType === 'SigmoidFiniteFutures' ? 'SIGMOID_FINITE_FUTURES' : 'LINEAR_FINITE_FUTURES',
-            payoffType: meta.payoffType === 'PowerFiniteFutures' ? 'Power' : 
-                       meta.payoffType === 'SigmoidFiniteFutures' ? 'Sigmoid' : 'Linear',
-            payoffPower: meta.payoffPower || 1,
-            // Sigmoid intensity will be read separately for sigmoid contracts
-            sigmoidIntensity: undefined,
-            short: actualShort,
-            long: actualLong,
-            isFunded,
-            isActive,
-            isExercised: meta.isExercised,
-            isResolved: meta.isResolved,
-            needsResolution,
-            resolutionStatus,
-            expiry: meta.expiry.toString(),
-            strikePrice: meta.strikePrice.toString(),
-            optionSize: meta.positionSize.toString(),
-            premium: meta.premium.toString(), // Always 0 for futures
-            priceAtExpiry: meta.priceAtExpiry.toString(),
-            exercisedAmount: meta.exercisedAmount.toString(),
-            underlyingToken: meta.underlyingToken,
-            strikeToken: meta.strikeToken,
-            underlyingSymbol: meta.underlyingSymbol,
-            strikeSymbol: meta.strikeSymbol
-          };
-        } catch (error) {
-          console.error(`Error fetching metadata for future ${futureAddress}:`, error);
-          return null;
-        }
+    // OPTIMIZED: Bundle all contract calls into batches to minimize RPC calls
+    console.log('🚀 Optimizing RPC calls with batch processing...');
+    
+    // Step 1: Get all metadata in parallel (N calls -> still N, but parallel)
+    const metadataPromises = allFutures.map(address => 
+      futuresBookContract.getFuturesMeta(address).catch(error => {
+        console.error(`Error fetching metadata for ${address}:`, error);
+        return null;
       })
     );
+    
+    // Step 2: Get all expiry data in parallel 
+    const expiryPromises = allFutures.map(address => {
+      const futuresContract = new ethers.Contract(address, [
+        'function expiry() view returns (uint256)'
+      ], provider);
+      return futuresContract.expiry().catch(error => {
+        console.warn(`Failed to read expiry from ${address}:`, error.message);
+        return undefined;
+      });
+    });
+    
+    // Step 3: Get position mappings in parallel for contracts that might need them
+    const longPositionPromises = allFutures.map(address => 
+      futuresBookContract.longPosition(address).catch(() => '0x0000000000000000000000000000000000000000')
+    );
+    
+    const shortPositionPromises = allFutures.map(address => 
+      futuresBookContract.shortPosition(address).catch(() => '0x0000000000000000000000000000000000000000')
+    );
+    
+    // Execute all batches in parallel - this reduces from 4N sequential calls to 4 parallel batches
+    const [allMetadata, allExpiries, allLongPositions, allShortPositions] = await Promise.all([
+      Promise.all(metadataPromises),
+      Promise.all(expiryPromises),
+      Promise.all(longPositionPromises),
+      Promise.all(shortPositionPromises)
+    ]);
+    
+    console.log(`✅ Completed batched RPC calls: ${allFutures.length} contracts processed`);
+    
+    // Step 4: Process the results
+    const futuresMetadata = allFutures.map((futureAddress, index) => {
+      const meta = allMetadata[index];
+      if (!meta) return null;
+      
+      const actualExpiry = allExpiries[index];
+      const currentTime = Math.floor(Date.now() / 1000);
+      
+      // Use position mappings to fix metadata bugs
+      const actualLong = meta.long === '0x0000000000000000000000000000000000000000' 
+        ? allLongPositions[index] 
+        : meta.long;
+      const actualShort = meta.short === '0x0000000000000000000000000000000000000000' 
+        ? allShortPositions[index] 
+        : meta.short;
+      
+      const hasLongPosition = actualLong && actualLong !== '0x0000000000000000000000000000000000000000';
+      const isFunded = true;
+      const isActive = hasLongPosition;
+      const isExpired = actualExpiry && actualExpiry > 0 && currentTime > actualExpiry;
+      const needsResolution = isExpired && !meta.isResolved && !meta.isExercised;
+      
+      let resolutionStatus = 'active';
+      if (!isExpired) {
+        resolutionStatus = 'active';
+      } else if (meta.isResolved) {
+        resolutionStatus = 'resolved';
+      } else if (meta.isExercised) {
+        resolutionStatus = 'exercised';
+      } else {
+        resolutionStatus = 'needs_resolution';
+      }
+      
+      return {
+        address: meta.futureAddress,
+        type: 'future',
+        contractType: meta.payoffType === 'PowerFiniteFutures' ? 'POWER_FINITE_FUTURES' : 
+                     meta.payoffType === 'SigmoidFiniteFutures' ? 'SIGMOID_FINITE_FUTURES' : 'LINEAR_FINITE_FUTURES',
+        payoffType: meta.payoffType === 'PowerFiniteFutures' ? 'Power' : 
+                   meta.payoffType === 'SigmoidFiniteFutures' ? 'Sigmoid' : 'Linear',
+        payoffPower: meta.payoffPower,
+        // Sigmoid intensity will be read in next batch
+        sigmoidIntensity: undefined,
+        short: actualShort,
+        long: actualLong,
+        isFunded,
+        isActive,
+        isExercised: meta.isExercised,
+        isResolved: meta.isResolved,
+        needsResolution,
+        resolutionStatus,
+        expiry: actualExpiry ? actualExpiry.toString() : '0',
+        strikePrice: meta.strikePrice.toString(),
+        optionSize: meta.positionSize.toString(),
+        premium: meta.premium.toString(), // Always 0 for futures
+        priceAtExpiry: meta.priceAtExpiry.toString(),
+        exercisedAmount: meta.exercisedAmount.toString(),
+        underlyingToken: meta.underlyingToken,
+        strikeToken: meta.strikeToken,
+        underlyingSymbol: meta.underlyingSymbol,
+        strikeSymbol: meta.strikeSymbol
+      };
+    });
     
     // Filter out null entries (failed metadata fetches)
     const validFutures = futuresMetadata.filter(meta => meta !== null);
     
-    // Read sigmoid intensities for sigmoid contracts
-    for (const future of validFutures) {
-      if (future.payoffType === 'Sigmoid') {
-        try {
-          // Create contract instance for the sigmoid futures contract
-          const sigmoidContract = new ethers.Contract(future.address, [
-            'function sigmoidIntensity1e18() view returns (uint256)'
-          ], provider);
-          
-          const intensity1e18 = await sigmoidContract.sigmoidIntensity1e18();
-          future.sigmoidIntensity = parseFloat(ethers.formatUnits(intensity1e18.toString(), 18));
-        } catch (error) {
+    // OPTIMIZED: Read sigmoid intensities in parallel batch
+    const sigmoidFutures = validFutures.filter(future => future.payoffType === 'Sigmoid');
+    console.log(`🔧 Processing ${sigmoidFutures.length} sigmoid contracts...`);
+    
+    if (sigmoidFutures.length > 0) {
+      const sigmoidIntensityPromises = sigmoidFutures.map(future => {
+        const sigmoidContract = new ethers.Contract(future.address, [
+          'function sigmoidIntensity1e18() view returns (uint256)'
+        ], provider);
+        return sigmoidContract.sigmoidIntensity1e18().catch(error => {
           console.warn(`Failed to read sigmoid intensity for ${future.address}:`, error.message);
-          future.sigmoidIntensity = 1.0; // Default fallback
+          return undefined;
+        });
+      });
+      
+      const allSigmoidIntensities = await Promise.all(sigmoidIntensityPromises);
+      
+      // Apply the results back to the futures
+      sigmoidFutures.forEach((future, index) => {
+        const intensity1e18 = allSigmoidIntensities[index];
+        if (intensity1e18 !== undefined) {
+          future.sigmoidIntensity = parseFloat(ethers.formatUnits(intensity1e18.toString(), 18));
+        } else {
+          future.sigmoidIntensity = undefined;
         }
-      }
+      });
+      
+      console.log(`✅ Completed sigmoid intensity batch: ${sigmoidFutures.length} contracts processed`);
     }
     
     // Debug: Log the data structure to identify BigInt fields
@@ -1349,9 +1374,31 @@ app.get('/api/futures/:contractAddress', async (req, res) => {
     const isFunded = true; // FuturesBook ensures all registered contracts are funded
     const isActive = hasLongPosition;
     
+    // Read actual expiry from the individual futures contract instance
+    let actualExpiry = futuresMeta.expiry;
+    try {
+      // Read expiry directly from the futures contract instance
+      const futuresContract = new ethers.Contract(contractAddress, [
+        'function expiry() view returns (uint256)'
+      ], provider);
+      
+      const contractExpiry = await futuresContract.expiry();
+      if (contractExpiry && contractExpiry > 0) {
+        actualExpiry = contractExpiry;
+        console.log(`Read expiry from futures contract ${contractAddress}: ${contractExpiry.toString()}`);
+      } else {
+        console.log(`Futures contract ${contractAddress} has no expiry set yet, skipping metadata fallback`);
+        actualExpiry = undefined;
+      }
+    } catch (error) {
+      console.warn(`Failed to read expiry from futures contract ${contractAddress}:`, error.message);
+      // Don't use metadata fallback - set as undefined if contract can't be read
+      actualExpiry = undefined;
+    }
+
     // Check resolution status
     const currentTime = Math.floor(Date.now() / 1000);
-    const isExpired = futuresMeta.expiry > 0 && currentTime > futuresMeta.expiry;
+    const isExpired = actualExpiry && actualExpiry > 0 && currentTime > actualExpiry;
     const needsResolution = isExpired && !futuresMeta.isResolved && !futuresMeta.isExercised;
     
     let resolutionStatus = 'active';
@@ -1377,7 +1424,7 @@ app.get('/api/futures/:contractAddress', async (req, res) => {
       strikePrice: futuresMeta.strikePrice.toString(),
       optionSize: futuresMeta.positionSize.toString(),
       premium: futuresMeta.premium.toString(), // Always 0 for futures
-      expiry: futuresMeta.expiry.toString(),
+      expiry: actualExpiry ? actualExpiry.toString() : '0',
       isActive,
       isExercised: futuresMeta.isExercised,
       isFunded,
@@ -1407,7 +1454,8 @@ app.get('/api/futures/:contractAddress', async (req, res) => {
         responseData.sigmoidIntensity = parseFloat(ethers.formatUnits(intensity1e18.toString(), 18));
       } catch (error) {
         console.warn(`Failed to read sigmoid intensity for ${contractAddress}:`, error.message);
-        responseData.sigmoidIntensity = 1.0; // Default fallback
+        // Don't set a fallback - let it be undefined to indicate data couldn't be read
+        responseData.sigmoidIntensity = undefined;
       }
     }
 
@@ -1477,9 +1525,9 @@ app.post('/api/futures/create-future', async (req, res) => {
       expirySeconds // New: maker-chosen expiry time
     } = req.body;
     
-    if (!underlyingToken || !strikeToken || !oracle || !userAddress) {
+    if (!underlyingToken || !strikeToken || !oracle || !userAddress || !expirySeconds) {
       return res.status(400).json({ 
-        error: 'Missing required contract addresses or user address' 
+        error: 'Missing required contract addresses, user address, or expiry seconds' 
       });
     }
     
@@ -1492,7 +1540,7 @@ app.post('/api/futures/create-future', async (req, res) => {
     
     const optionSizeWei = ethers.parseUnits(optionSize.toString(), 18);
     const makerIsLong = makerSide === 'long';
-    const expirySecondsValue = expirySeconds || 300; // Default 5 minutes if not provided
+    const expirySecondsValue = expirySeconds; // Don't provide default - require explicit value
     
     // Calculate strikeNotional based on maker side and user input
     let strikeNotional = 0n;
@@ -1529,7 +1577,7 @@ app.post('/api/futures/create-future', async (req, res) => {
     let createData;
     if (payoffType === 'Power') {
       // Validate power parameter for Power futures
-      const power = parseInt(payoffPower) || 2;
+      const power = parseInt(payoffPower);
       if (power < 1 || power > 100) {
         return res.status(400).json({ 
           error: 'Invalid payoff power: must be between 1 and 100' 
@@ -1960,7 +2008,53 @@ app.post('/api/contracts/:contractAddress/long-entered', async (req, res) => {
     const { contractAddress } = req.params;
     const { longAddress, expiry, transactionHash } = req.body;
     
-    await resolutionService.handleLongEntry(contractAddress, longAddress, expiry, transactionHash);
+    // For futures contracts, if no expiry is provided, get it from the contract
+    let actualExpiry = expiry;
+    if (!expiry) {
+      try {
+        // Check if this is a futures contract by checking FuturesBook
+        const futuresBookContract = new ethers.Contract(FUTURESBOOK_ADDRESS, FuturesBookABI, provider);
+        const futuresMeta = await futuresBookContract.getFuturesMeta(contractAddress);
+        
+        if (futuresMeta) {
+          // Try to read expiry from the individual futures contract instance
+          try {
+            const futuresContract = new ethers.Contract(contractAddress, [
+              'function expiry() view returns (uint256)'
+            ], provider);
+            const contractExpiry = await futuresContract.expiry();
+            if (contractExpiry && contractExpiry > 0) {
+              actualExpiry = contractExpiry.toString();
+              console.log(`Using expiry from futures contract instance ${contractAddress}: ${actualExpiry}`);
+            } else if (futuresMeta.expiry) {
+              actualExpiry = futuresMeta.expiry.toString();
+              console.log(`Using expiry from FuturesBook metadata for ${contractAddress}: ${actualExpiry}`);
+            } else {
+              actualExpiry = Math.floor(Date.now() / 1000) + (5 * 60);
+              console.log(`Using default 5-minute expiry for futures contract ${contractAddress}: ${actualExpiry}`);
+            }
+          } catch (contractError) {
+            console.warn('Failed to read expiry from futures contract instance, trying metadata:', contractError.message);
+            if (futuresMeta.expiry) {
+              actualExpiry = futuresMeta.expiry.toString();
+              console.log(`Using expiry from FuturesBook metadata for ${contractAddress}: ${actualExpiry}`);
+            } else {
+              actualExpiry = Math.floor(Date.now() / 1000) + (5 * 60);
+              console.log(`Using default 5-minute expiry for futures contract ${contractAddress}: ${actualExpiry}`);
+            }
+          }
+        } else {
+          // Fallback for options contracts - use 5 minutes from now
+          actualExpiry = Math.floor(Date.now() / 1000) + (5 * 60);
+          console.log(`Using default 5-minute expiry for options contract ${contractAddress}: ${actualExpiry}`);
+        }
+      } catch (error) {
+        console.warn('Failed to get contract expiry, using default:', error.message);
+        actualExpiry = Math.floor(Date.now() / 1000) + (5 * 60);
+      }
+    }
+    
+    await resolutionService.handleLongEntry(contractAddress, longAddress, actualExpiry, transactionHash);
     
     res.json({ success: true, message: 'Long entry recorded and resolution timer set' });
   } catch (error) {

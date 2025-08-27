@@ -583,6 +583,13 @@ export default function OptionsMarketPage() {
                                 color: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,
                                 border: 'none'
                               }
+                            } else if (status.class === 'not-engaged') {
+                              // This covers "Not Engaged" status - just text color, no background or border
+                              return {
+                                backgroundColor: 'transparent',
+                                color: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,
+                                border: 'none'
+                              }
                             }
                             return undefined
                           })()}

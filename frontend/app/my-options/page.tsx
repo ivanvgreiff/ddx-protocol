@@ -554,17 +554,36 @@ export default function MyOptionsPage() {
                                   status.class === 'expired' ? 'ghost' : 
                                   status.class === 'exercised' ? 'outline' :
                                   status.class === 'reclaimed' ? 'outline' : 'outline'}
-                          style={
-                            status.class === 'exercised' ? {
-                              backgroundColor: isShortPosition ? SHORT_COLOR : LONG_COLOR,
-                              color: TEXT_ON_COLOR,
-                              borderColor: isShortPosition ? SHORT_COLOR : LONG_COLOR
-                            } : status.class === 'reclaimed' ? {
-                              backgroundColor: isShortPosition ? SHORT_COLOR : LONG_COLOR,
-                              color: TEXT_ON_COLOR,
-                              borderColor: isShortPosition ? SHORT_COLOR : LONG_COLOR
-                            } : undefined
-                          }
+                          style={(() => {
+                            if (status.class === 'exercised') {
+                              return {
+                                backgroundColor: isShortPosition ? SHORT_COLOR : LONG_COLOR,
+                                color: TEXT_ON_COLOR,
+                                borderColor: isShortPosition ? SHORT_COLOR : LONG_COLOR
+                              }
+                            } else if (status.class === 'reclaimed') {
+                              return {
+                                backgroundColor: isShortPosition ? SHORT_COLOR : LONG_COLOR,
+                                color: TEXT_ON_COLOR,
+                                borderColor: isShortPosition ? SHORT_COLOR : LONG_COLOR
+                              }
+                            } else if (status.class === 'expired') {
+                              // This covers "Unresolved" status - just text color, no background or border
+                              return {
+                                backgroundColor: 'transparent',
+                                color: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,
+                                border: 'none'
+                              }
+                            } else if (status.class === 'not-engaged') {
+                              // This covers "Not Engaged" status - just text color, no background or border
+                              return {
+                                backgroundColor: 'transparent',
+                                color: isShortPosition ? SHORT_COLOR : isLongPosition ? LONG_COLOR : NEUTRAL_COLOR,
+                                border: 'none'
+                              }
+                            }
+                            return undefined
+                          })()}
                         >
                           {status.text}
                         </Badge>
