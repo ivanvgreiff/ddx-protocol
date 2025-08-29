@@ -21,7 +21,7 @@ import {
  */
 
 export type OptionType = "CALL" | "PUT";
-export type PayoffType = "Linear" | "Quadratic" | "Logarithmic" | "Power" | "Sigmoid";
+export type PayoffType = "Linear" | "Quadratic" | "Logarithmic" | "Power" | "Sigmoid" | "Sinusoidal";
 
 export type OptionPayoffChartProps = {
   optionType: OptionType;
@@ -52,16 +52,23 @@ export type OptionPayoffChartProps = {
   isNonUserContract?: boolean;
   /** For futures contracts - changes diagonal line behavior */
   isFuturesContract?: boolean;
+  /** For genie contracts - changes color scheme */
+  isGenieContract?: boolean;
   /** Power for Power payoff type (default 2) */
   payoffPower?: number;
   /** Intensity for Sigmoid payoff type (default 1.0) */
   sigmoidIntensity?: number;
+  /** Amplitude for Sinusoidal payoff type (default 1.0) */
+  sinusoidalAmplitude?: number;
+  /** Period for Sinusoidal payoff type (default strike price) */
+  sinusoidalPeriod?: number;
 };
 
 const NEON_GREEN = COLORS.LONG; // neon green payoff line for long positions
 const NEON_ORANGE = COLORS.SHORT; // neon orange
 const NEON_PINK = COLORS.NEUTRAL_OPTIONS; // neon pink payoff line for non-user contracts (options)
 const NEON_INDIGO = COLORS.NEUTRAL; // indigo for futures contracts
+const NEON_CYAN = COLORS.NEUTRAL_GENIES; // cyan for genie contracts
 const GRID_COLOR = "hsl(var(--border) / 0.25)"; // subtle grid per design system
 // Use theme-aware colors that work in both light and dark modes
 const AXIS_COLOR = "rgb(229 231 235)"; // gray-200 for light backgrounds, visible on dark
@@ -103,7 +110,9 @@ function payoff(
   spotPrice: number,
   K: number,
   power: number = 2,
-  intensity: number = 1.0
+  intensity: number = 1.0,
+  amplitude: number = 1.0,
+  period: number = K
 ): number {
   switch (payoffType) {
     case "Linear":
@@ -122,6 +131,18 @@ function payoff(
       const sigmoidValue = sigmoid(z);
       const delta = Math.abs(sigmoidValue - 0.5);
       return delta * 2 * K; // Using K as notional for display purposes
+    case "Sinusoidal":
+      // Sinusoidal payoff exactly matching SinusoidalGenie.sol contract
+      // notional = strikePrice * positionSize (but for display we use K as notional)
+      const notional = K; // Using strike price as notional for display
+      const priceDiff = spotPrice - K; // diff = int256(p1) - int256(p0)
+      const angle = (priceDiff * 2 * Math.PI) / period; // angle = ((diff * TWO_PI) / int256(period1e18))
+      const sinVal = Math.sin(angle); // sinVal in [-1, +1]
+      const scaled = sinVal * amplitude; // scaled = (sinVal * amplitude) / 1e18 -> [-A, +A]
+      const ratio = (1 + scaled) / 2; // ratio1e18 = (scaled + 1e18) / 2 -> [0, 1] fraction
+      // Clamp ratio to [0, 1] just like the contract
+      const clampedRatio = Math.max(0, Math.min(1, ratio));
+      return clampedRatio * notional; // payout = (ratio * notional) / 1e18
     case "Logarithmic":
       if (optionType === "CALL") {
         // Logarithmic Call Beta Variant: P = S * log(I(x-K + 1/I)) if x >= K, else 0
@@ -181,8 +202,11 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
     isShortPosition = false,
     isNonUserContract = false,
     isFuturesContract = false,
+    isGenieContract = false,
     payoffPower = 2,
     sigmoidIntensity = 1.0,
+    sinusoidalAmplitude = 1.0,
+    sinusoidalPeriod,
   } = props;
 
   const K = fromUnits(strikePrice, decimals) ?? 0;
@@ -266,18 +290,49 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
               value = 0; // No change at strike
             }
           }
+        } else if (payoffType === 'Sinusoidal') {
+          // Sinusoidal Genie: Directional payoff like Power/Sigmoid futures
+          const notional = K * size; // notional = strikePrice * positionSize
+          const priceDiff = S - K; // diff = int256(p1) - int256(p0)
+          const angle = (priceDiff * 2 * Math.PI) / (sinusoidalPeriod || K); // angle = ((diff * TWO_PI) / int256(period1e18))
+          const sinVal = Math.sin(angle); // sinVal in [-1, +1] - this is the directional component
+          const scaled = sinVal * (sinusoidalAmplitude || 1.0); // scaled = (sinVal * amplitude) -> [-A, +A]
+          
+          // For display purposes, show the directional nature of the sine wave
+          // Positive sine = long wins, negative sine = short wins
+          const sinusoidalPayoff = Math.abs(scaled) * notional / 2; // Magnitude of the payoff
+          
+          if (isShortPosition) {
+            // Short wins when sine is negative, loses when sine is positive
+            if (scaled < 0) {
+              value = sinusoidalPayoff; // Profit when sine is negative
+            } else if (scaled > 0) {
+              value = -sinusoidalPayoff; // Loss when sine is positive
+            } else {
+              value = 0; // Neutral at zero crossing
+            }
+          } else {
+            // Long wins when sine is positive, loses when sine is negative
+            if (scaled > 0) {
+              value = sinusoidalPayoff; // Profit when sine is positive
+            } else if (scaled < 0) {
+              value = -sinusoidalPayoff; // Loss when sine is negative
+            } else {
+              value = 0; // Neutral at zero crossing
+            }
+          }
         } else {
           // Linear futures: y = (S - K) * size
           value = (S - K) * size;
         }
       } else {
         // For options contracts: use option payoff logic
-        value = payoff(payoffType, optionType, S, K, payoffPower, sigmoidIntensity) * size; // Total payoff (not normalized)
+        value = payoff(payoffType, optionType, S, K, payoffPower, sigmoidIntensity, sinusoidalAmplitude, sinusoidalPeriod || K) * size; // Total payoff (not normalized)
       }
       
       // For short positions, invert the payoff to show the seller's perspective
-      // (Skip this for Power and Sigmoid futures as they handle position perspective internally)
-      if (isShortPosition && !(isFuturesContract && (payoffType === 'Power' || payoffType === 'Sigmoid'))) {
+      // (Skip this for Power, Sigmoid, and Sinusoidal futures as they handle position perspective internally)
+      if (isShortPosition && !(isFuturesContract && (payoffType === 'Power' || payoffType === 'Sigmoid' || payoffType === 'Sinusoidal'))) {
         value = -value;
       }
       
@@ -321,11 +376,11 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
       // For short positions, we want to show negative values, so extend the range appropriately
       if (!Number.isFinite(min) || min >= 0) min = -1; // ensure we have negative space
       if (!Number.isFinite(max) || max <= 0) max = 0.1; // small positive space for labels
-      return [min * 1.1, max * 1.1];
+      return [min * 1.3, max * 1.3];
     } else {
       // For long positions, keep the original behavior
       if (!Number.isFinite(max) || max <= 0) max = 1; // avoid zero height
-      return [0, max * 1.1];
+      return [0, max * 1.3];
     }
   }, [data, isShortPosition]);
 
@@ -449,7 +504,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
             strokeWidth={2.5}
             stroke={
               isNonUserContract 
-                ? (isFuturesContract ? NEON_INDIGO : NEON_PINK) 
+                ? (isGenieContract ? NEON_CYAN : isFuturesContract ? NEON_INDIGO : NEON_PINK) 
                 : (isShortPosition ? NEON_ORANGE : NEON_GREEN)
             }
             className="transition-all duration-300"

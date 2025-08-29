@@ -79,11 +79,13 @@ export default function CreateOptionPage() {
     premium: '',
     oracle: ''
   })
-  const [contractType, setContractType] = useState('option') // 'option' or 'future'
+  const [contractType, setContractType] = useState('option') // 'option' or 'future' or 'genie'
   const [optionType, setOptionType] = useState('call')
   const [payoffType, setPayoffType] = useState('Linear')
   const [payoffPower, setPayoffPower] = useState('2') // For power payoffs
   const [sigmoidIntensity, setSigmoidIntensity] = useState('1.0') // For sigmoid payoffs
+  const [sinusoidalAmplitude, setSinusoidalAmplitude] = useState('1.0') // For sinusoidal genies
+  const [sinusoidalPeriod, setSinusoidalPeriod] = useState('') // For sinusoidal genies (defaults to strike price)
   const [makerSide, setMakerSide] = useState('short') // 'long' or 'short' - only for futures
   const [expirySeconds, setExpirySeconds] = useState('300') // Default 5 minutes for futures
   const [isCreating, setIsCreating] = useState(false)
@@ -152,12 +154,18 @@ export default function CreateOptionPage() {
         ...(contractType === 'future' && {
           makerSide: makerSide,
           expirySeconds: expirySeconds || '300'
+        }),
+        ...(contractType === 'genie' && {
+          sinusoidalAmplitude: sinusoidalAmplitude,
+          sinusoidalPeriod: sinusoidalPeriod
         })
       }
       
       let endpoint: string
       if (contractType === 'future') {
         endpoint = '/api/futures/create-future'
+      } else if (contractType === 'genie') {
+        endpoint = '/api/genie/create-sinusoidal'
       } else {
         endpoint = optionType === 'call' ? '/api/option/create-call' : '/api/option/create-put'
       }
@@ -198,7 +206,9 @@ export default function CreateOptionPage() {
           provider
         )
         
-        const bookAddress = contractType === 'future' ? futuresBookAddress : optionsBookAddress
+        const bookAddress = contractType === 'future' ? futuresBookAddress : 
+                          contractType === 'genie' ? futuresBookAddress : // Genies use same book as futures
+                          optionsBookAddress
         const currentAllowance = await tokenContract.allowance(account, bookAddress)
         const requiredAmount = ethers.getBigInt(amountToApprove)
         
@@ -224,9 +234,11 @@ export default function CreateOptionPage() {
           toast.success('✅ Token already approved!')
         }
         
-        // Step 4: Send separate option creation transaction
+        // Step 4: Send separate contract creation transaction
         toast.loading(contractType === 'future' 
           ? 'Waiting for futures creation confirmation...'
+          : contractType === 'genie'
+          ? 'Waiting for genie contract creation confirmation...'
           : 'Waiting for option creation confirmation...')
         
         console.log('Sending option creation transaction:', createTransaction)
@@ -265,30 +277,36 @@ export default function CreateOptionPage() {
         if (tx) {
           toast.loading(contractType === 'future' 
             ? 'Waiting for futures creation confirmation...'
+            : contractType === 'genie'
+            ? 'Waiting for genie contract creation confirmation...'
             : 'Waiting for option creation confirmation...')
           
           // Wait for confirmation
           const receipt = await tx.wait()
           const deployTxHash = tx.hash
           
-          toast.success('Option created successfully!')
+          toast.success(contractType === 'future' 
+            ? 'Future created successfully!'
+            : contractType === 'genie'
+            ? 'Genie contract created successfully!'
+            : 'Option created successfully!')
           
           // Extract contract address from the transaction logs
           let contractAddress = null
           try {
             console.log('Extracting contract address from transaction receipt...')
             
-            if (contractType === 'future') {
-              // Look for FutureCreated event in the logs for futures
-              const futureCreatedLog = receipt.logs.find((log: any) => {
-                // FuturesBook FutureCreated event has 4 topics: event signature, creator, instance, futureType
+            if (contractType === 'future' || contractType === 'genie') {
+              // Look for FutureCreated/GenieCreated event in the logs for futures and genies
+              const contractCreatedLog = receipt.logs.find((log: any) => {
+                // FuturesBook event has 4 topics: event signature, creator, instance, contractType
                 return log.topics && log.topics.length === 4
               })
               
-              if (futureCreatedLog) {
-                // The contract address is the second indexed parameter (topics[2]) for futures
-                contractAddress = ethers.getAddress('0x' + futureCreatedLog.topics[2].slice(26))
-                console.log('✅ Extracted futures contract address from logs:', contractAddress)
+              if (contractCreatedLog) {
+                // The contract address is the second indexed parameter (topics[2])
+                contractAddress = ethers.getAddress('0x' + contractCreatedLog.topics[2].slice(26))
+                console.log(`✅ Extracted ${contractType} contract address from logs:`, contractAddress)
               }
             } else {
               // Look for OptionCreated event in the logs for options
@@ -337,6 +355,30 @@ export default function CreateOptionPage() {
                   })
                 })
                 console.log('✅ Futures contract auto-registered successfully')
+              } else if (contractType === 'genie') {
+                // Auto-register genie contract
+                await fetch('/api/contracts/auto-register', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    transactionHash: deployTxHash,
+                    contractAddress: contractAddress,
+                    contractType: 'genie',
+                    payoffType: 'Sinusoidal',
+                    sinusoidalAmplitude: sinusoidalAmplitude,
+                    sinusoidalPeriod: sinusoidalPeriod,
+                    shortAddress: account,
+                    underlyingToken: formData.underlyingToken,
+                    strikeToken: formData.strikeToken,
+                    underlyingSymbol: formData.underlyingSymbol,
+                    strikeSymbol: formData.strikeSymbol,
+                    strikePrice: formData.strikePrice,
+                    optionSize: formData.optionSize,
+                    premium: '0', // Genies have 0 premium
+                    oracle: formData.oracle
+                  })
+                })
+                console.log('✅ Genie contract auto-registered successfully')
               } else {
                 // Auto-register options contract
                 await fetch('/api/contracts/auto-register', {
@@ -494,11 +536,17 @@ export default function CreateOptionPage() {
                   <SelectContent>
                     <SelectItem value="option">Options Contract</SelectItem>
                     <SelectItem value="future">Futures Contract</SelectItem>
+                    <SelectItem value="genie">Genie Contract</SelectItem>
                   </SelectContent>
                 </Select>
                 {contractType === 'future' && (
                   <p className="text-sm text-muted-foreground mt-1">
                     Create a linear finite future with fixed settlement terms at expiry
+                  </p>
+                )}
+                {contractType === 'genie' && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Create a genie contract with sinusoidal payoffs that oscillate between 0% and 100% of notional
                   </p>
                 )}
               </div>
@@ -537,28 +585,30 @@ export default function CreateOptionPage() {
                   </div>
                 )}
 
-                <div>
-                  <Label htmlFor="payoffType">Payoff Type</Label>
-                  <Select value={payoffType} onValueChange={setPayoffType}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Linear">Linear</SelectItem>
-                      {contractType === 'option' ? (
-                        <>
-                          <SelectItem value="Quadratic">Quadratic</SelectItem>
-                          <SelectItem value="Logarithmic">Logarithmic</SelectItem>
-                        </>
-                      ) : (
-                        <>
-                          <SelectItem value="Power">Power</SelectItem>
-                          <SelectItem value="Sigmoid">Sigmoid</SelectItem>
-                        </>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {contractType !== 'genie' && (
+                  <div>
+                    <Label htmlFor="payoffType">Payoff Type</Label>
+                    <Select value={payoffType} onValueChange={setPayoffType}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Linear">Linear</SelectItem>
+                        {contractType === 'option' ? (
+                          <>
+                            <SelectItem value="Quadratic">Quadratic</SelectItem>
+                            <SelectItem value="Logarithmic">Logarithmic</SelectItem>
+                          </>
+                        ) : (
+                          <>
+                            <SelectItem value="Power">Power</SelectItem>
+                            <SelectItem value="Sigmoid">Sigmoid</SelectItem>
+                          </>
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
 
               {/* Power input for Power futures */}
@@ -598,6 +648,45 @@ export default function CreateOptionPage() {
                   />
                   <p className="text-sm text-muted-foreground mt-1">
                     Intensity for the sigmoid function (0.1-100). Higher intensity creates steeper curves around the strike price.
+                  </p>
+                </div>
+              )}
+
+              {/* Amplitude input for Sinusoidal genies */}
+              {contractType === 'genie' && (
+                <div>
+                  <Label htmlFor="sinusoidalAmplitude">Sinusoidal Amplitude</Label>
+                  <Input
+                    id="sinusoidalAmplitude"
+                    type="number"
+                    step="0.1"
+                    value={sinusoidalAmplitude}
+                    onChange={(e) => setSinusoidalAmplitude(e.target.value)}
+                    placeholder="1.0"
+                    min="0.1"
+                    max="1.0"
+                    required
+                  />
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Amplitude of the sinusoidal wave (0.1-1.0). Controls the oscillation range of payoffs.
+                  </p>
+                </div>
+              )}
+
+              {/* Period input for Sinusoidal genies */}
+              {contractType === 'genie' && (
+                <div>
+                  <Label htmlFor="sinusoidalPeriod">Sinusoidal Period</Label>
+                  <Input
+                    id="sinusoidalPeriod"
+                    type="number"
+                    step="0.01"
+                    value={sinusoidalPeriod}
+                    onChange={(e) => setSinusoidalPeriod(e.target.value)}
+                    placeholder="(defaults to strike price)"
+                  />
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Period of the sinusoidal wave. Leave blank to default to strike price value.
                   </p>
                 </div>
               )}
@@ -731,9 +820,10 @@ export default function CreateOptionPage() {
                 disabled={isCreating}
                 className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90"
               >
-{isCreating ? 'Processing...' : contractType === 'future' 
-                  ? 'Create Future Contract (1 Transaction)' 
-                  : `Create ${optionType === 'call' ? 'Call' : 'Put'} Option (2 Transactions)`}
+                {isCreating ? 'Processing...' : 
+                 contractType === 'future' ? 'Create Future Contract (1 Transaction)' :
+                 contractType === 'genie' ? 'Create Genie Contract (1 Transaction)' :
+                 `Create ${optionType === 'call' ? 'Call' : 'Put'} Option (2 Transactions)`}
               </Button>
             </form>
           </CardContent>

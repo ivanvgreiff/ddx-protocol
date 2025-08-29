@@ -32,8 +32,8 @@ export function Header() {
               <a href="/futures-book" className="text-foreground hover:text-primary transition-colors">
                 Futures Book
               </a>
-              <a href="/my-options" className="text-foreground hover:text-primary transition-colors">
-                My Options
+              <a href="/genie-book" className="text-foreground hover:text-primary transition-colors">
+                Genie Book
               </a>
               <a href="/create" className="text-foreground hover:text-primary transition-colors">
                 Draft Contract
@@ -79,8 +79,8 @@ export function Header() {
               <a href="/futures-book" className="block px-3 py-2 text-foreground hover:text-primary">
                 Futures Book
               </a>
-              <a href="/my-options" className="block px-3 py-2 text-foreground hover:text-primary">
-                My Options
+              <a href="/genie-book" className="block px-3 py-2 text-foreground hover:text-primary">
+                Genie Book
               </a>
               <a href="/create" className="block px-3 py-2 text-foreground hover:text-primary">
                 Draft Contract

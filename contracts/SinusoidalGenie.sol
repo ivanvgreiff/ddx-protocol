@@ -262,14 +262,17 @@ contract SinusoidalGenie {
             angleNorm -= TWO_PI;
         }
 
-        // Calculate sine of the angle (Taylor series approximation)
-        int256 sinVal = _sinWad(angleNorm);
-        // Use absolute value of sin (magnitude of payoff)
-        uint256 absSin = uint256(sinVal < 0 ? -sinVal : sinVal);
-        // Fraction of notional = amplitude * |sin(angle)|
-        uint256 fraction = (absSin * amplitude1e18) / 1e18;
-        // Payout amount in strike tokens
-        uint256 payout = (fraction * notional) / 1e18;
+        int256 sinVal = _sinWad(angleNorm); // [-1e18, +1e18]
+        // Scale by amplitude: [-A, +A]
+        int256 scaled = (sinVal * int256(amplitude1e18)) / 1e18;
+        // Map to [0, 1] fraction: (1 + scaled) / 2
+        int256 ratio1e18 = (scaled + int256(1e18)) / 2;
+        // Clamp just in case of rounding
+        if (ratio1e18 < 0) ratio1e18 = 0;
+        if (ratio1e18 > int256(1e18)) ratio1e18 = int256(1e18);
+        // Long’s payout
+        uint256 payout = (uint256(ratio1e18) * notional) / 1e18;
+
 
         isActive = false;
         isExercised = true;

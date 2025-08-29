@@ -114,6 +114,7 @@ const MTKABI = require('../utils/MTKContractABI.json');
 const TwoTKABI = require('../utils/TwoTKContractABI.json');
 const FuturesBookABI = require('../utils/FuturesBookABI.json');
 const LinearFiniteFuturesABI = require('../utils/LinearFiniteFuturesABI.json');
+const GenieBookABI = require('../utils/GenieBookABI.json');
 
 // Utility function to add delay
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -168,6 +169,7 @@ const CALL_IMPL_ADDRESS = process.env.CALL_OPTION_IMPL;
 const PUT_IMPL_ADDRESS = process.env.PUT_OPTION_IMPL;
 const FUTURESBOOK_ADDRESS = process.env.FUTURES_BOOK;
 const LINEAR_FINITE_FUTURES_ADDRESS = process.env.LINEAR_FINITE_FUTURES;
+const GENIEBOOK_ADDRESS = process.env.GENIE_BOOK;
 
 // Validate that all required addresses are provided
 if (!OPTIONSBOOK_ADDRESS) {
@@ -190,6 +192,10 @@ if (!LINEAR_FINITE_FUTURES_ADDRESS) {
   console.error('❌ LINEAR_FINITE_FUTURES not found in environment variables');
   process.exit(1);
 }
+if (!GENIEBOOK_ADDRESS) {
+  console.error('❌ GENIE_BOOK not found in environment variables');
+  process.exit(1);
+}
 
 console.log('✅ Contract addresses loaded from .env:');
 console.log('  OPTIONS_BOOK:', OPTIONSBOOK_ADDRESS);
@@ -197,6 +203,7 @@ console.log('  CALL_OPTION_IMPL:', CALL_IMPL_ADDRESS);
 console.log('  PUT_OPTION_IMPL:', PUT_IMPL_ADDRESS);
 console.log('  FUTURES_BOOK:', FUTURESBOOK_ADDRESS);
 console.log('  LINEAR_FINITE_FUTURES:', LINEAR_FINITE_FUTURES_ADDRESS);
+console.log('  GENIE_BOOK:', GENIEBOOK_ADDRESS);
 
 // Query current OptionsBook factory for all actual contracts
 app.get('/api/factory/all-contracts', async (req, res) => {
@@ -1836,6 +1843,489 @@ app.post('/api/futures/:contractAddress/reclaim', async (req, res) => {
     console.error('Error preparing futures reclaim transaction:', error);
     res.status(500).json({ 
       error: 'Failed to prepare futures reclaim transaction',
+      details: error.message 
+    });
+  }
+});
+
+// ==================== GENIE API ENDPOINTS ====================
+
+// Get all genie contracts from GenieBook factory (OPTIMIZED with Multicall)
+app.get('/api/factory/all-genies', async (req, res) => {
+  try {
+    if (!provider) {
+      return res.status(500).json({ error: 'Provider not initialized' });
+    }
+    
+    console.log('🔍 Querying GenieBook with MULTICALL optimization...');
+    console.log('GenieBook Address:', GENIEBOOK_ADDRESS);
+    
+    // Initialize multicall service
+    const GenieMulticallService = require('./services/GenieMulticallService');
+    const SinusoidalGenieABI = require('../utils/SinusoidalGenie.json');
+    
+    const genieService = new GenieMulticallService(
+      provider,
+      GENIEBOOK_ADDRESS,
+      GenieBookABI,
+      SinusoidalGenieABI
+    );
+    
+    // Check if multicall is available
+    const multicallAvailable = await genieService.isMulticallAvailable();
+    console.log(`📡 Multicall availability: ${multicallAvailable ? '✅ Available' : '❌ Not available'}`);
+    
+    // Get all genies with optimized multicall (2 RPC calls vs 1+3N)
+    const validContracts = await genieService.getAllGeniesWithMetadata();
+    
+    console.log(`✅ Successfully fetched ${validContracts.length} genie contracts`);
+    console.log('🚀 RPC OPTIMIZATION: Reduced from 1+3N calls to 2 calls total!');
+    
+    res.json({
+      success: true,
+      contracts: validContracts,
+      total: validContracts.length,
+      multicallUsed: multicallAvailable
+    });
+  } catch (error) {
+    console.error('❌ Error fetching genie contracts:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch genie contracts',
+      details: error.message 
+    });
+  }
+});
+
+// Get specific genie contract details
+app.get('/api/genie/:contractAddress', async (req, res) => {
+  try {
+    const { contractAddress } = req.params;
+    
+    if (!provider) {
+      return res.status(500).json({ error: 'Provider not initialized' });
+    }
+    
+    if (!contractAddress || !ethers.isAddress(contractAddress)) {
+      return res.status(400).json({ 
+        error: 'Invalid contract address format',
+        address: contractAddress 
+      });
+    }
+    
+    console.log('🔍 Fetching genie details for:', contractAddress);
+    
+    const genieBookContract = new ethers.Contract(GENIEBOOK_ADDRESS, GenieBookABI, provider);
+    const genieMeta = await genieBookContract.getGenieMeta(contractAddress);
+    
+    const formattedContract = {
+      address: genieMeta.genieAddress,
+      underlyingToken: genieMeta.underlyingToken,
+      strikeToken: genieMeta.strikeToken,
+      underlyingSymbol: genieMeta.underlyingSymbol,
+      strikeSymbol: genieMeta.strikeSymbol,
+      strikePrice: genieMeta.strikePrice.toString(),
+      optionSize: genieMeta.positionSize.toString(),
+      premium: genieMeta.premium.toString(),
+      expiry: Number(genieMeta.expiry),
+      priceAtExpiry: genieMeta.priceAtExpiry.toString(),
+      isExercised: genieMeta.isExercised,
+      isResolved: genieMeta.isResolved,
+      long: genieMeta.long,
+      short: genieMeta.short,
+      payoffType: genieMeta.payoffType,
+      payoffPower: genieMeta.payoffPower,
+      isActive: genieMeta.long !== ethers.ZeroAddress && genieMeta.short !== ethers.ZeroAddress,
+      isFunded: genieMeta.short !== ethers.ZeroAddress,
+      contractType: 'genie'
+    };
+    
+    console.log('✅ Genie contract details fetched successfully');
+    
+    res.json({
+      success: true,
+      contract: formattedContract,
+      genieBookAddress: GENIEBOOK_ADDRESS,
+      timestamp: Date.now()
+    });
+  } catch (error) {
+    console.error('❌ Error fetching genie contract details:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch genie contract details',
+      details: error.message 
+    });
+  }
+});
+
+// Create sinusoidal genie contract
+app.post('/api/genie/create-sinusoidal', async (req, res) => {
+  try {
+    const {
+      underlyingToken,
+      strikeToken,
+      underlyingSymbol,
+      strikeSymbol,
+      strikePrice,
+      optionSize,
+      oracle,
+      userAddress,
+      sinusoidalAmplitude,
+      sinusoidalPeriod,
+      expirySeconds = '300'
+    } = req.body;
+    
+    if (!provider) {
+      return res.status(500).json({ error: 'Provider not initialized' });
+    }
+    
+    console.log('🧞 Creating sinusoidal genie contract:', {
+      underlyingToken,
+      strikeToken,
+      underlyingSymbol,
+      strikeSymbol,
+      strikePrice,
+      optionSize,
+      oracle,
+      userAddress,
+      sinusoidalAmplitude,
+      sinusoidalPeriod,
+      expirySeconds
+    });
+    
+    console.log('📍 Contract addresses being used:', {
+      GENIEBOOK_ADDRESS,
+      strikeToken,
+      underlyingToken,
+      oracle,
+      provider: !!provider
+    });
+    
+    // Validate required parameters
+    if (!underlyingToken || !strikeToken || !strikePrice || !optionSize || !oracle || !userAddress) {
+      return res.status(400).json({ error: 'Missing required parameters' });
+    }
+    
+    // Validate each address individually for better error reporting
+    if (!ethers.isAddress(underlyingToken)) {
+      return res.status(400).json({ error: 'Invalid underlyingToken address format', address: underlyingToken });
+    }
+    if (!ethers.isAddress(strikeToken)) {
+      return res.status(400).json({ error: 'Invalid strikeToken address format', address: strikeToken });
+    }
+    if (!ethers.isAddress(oracle)) {
+      return res.status(400).json({ error: 'Invalid oracle address format', address: oracle });
+    }
+    if (!ethers.isAddress(userAddress)) {
+      return res.status(400).json({ error: 'Invalid userAddress format', address: userAddress });
+    }
+    if (!GENIEBOOK_ADDRESS || !ethers.isAddress(GENIEBOOK_ADDRESS)) {
+      return res.status(500).json({ error: 'GenieBook address not configured or invalid', address: GENIEBOOK_ADDRESS });
+    }
+    
+    // Convert parameters to proper format
+    const positionSize = ethers.parseUnits(optionSize.toString(), 18);
+    const strikePricePerUnit = ethers.parseUnits(strikePrice.toString(), 18);
+    // Calculate total strike notional: strikePricePerUnit * positionSize
+    const strikeNotional = (strikePricePerUnit * positionSize) / ethers.parseUnits("1", 18);
+    const amplitude1e18 = ethers.parseUnits((sinusoidalAmplitude || '1.0').toString(), 18);
+    const period1e18 = sinusoidalPeriod ? 
+      ethers.parseUnits(sinusoidalPeriod.toString(), 18) : 
+      strikePricePerUnit; // Default to strike price per unit
+    
+    console.log('📊 Parsed genie parameters:', {
+      positionSize: positionSize.toString(),
+      strikeNotional: strikeNotional.toString(),
+      amplitude1e18: amplitude1e18.toString(),
+      period1e18: period1e18.toString(),
+      expirySeconds
+    });
+    
+    let genieBookContract;
+    let strikeTokenContract;
+    
+    try {
+      console.log('🔧 Creating GenieBook contract instance...');
+      console.log('  GENIEBOOK_ADDRESS:', GENIEBOOK_ADDRESS);
+      console.log('  GenieBookABI length:', GenieBookABI.length);
+      console.log('  Provider:', !!provider);
+      
+      // Test if we can get code from GenieBook address
+      const genieBookCode = await provider.getCode(GENIEBOOK_ADDRESS);
+      console.log('  GenieBook contract code length:', genieBookCode.length);
+      
+      if (genieBookCode === '0x') {
+        return res.status(500).json({ 
+          error: 'GenieBook contract not deployed at address',
+          address: GENIEBOOK_ADDRESS
+        });
+      }
+      
+      genieBookContract = new ethers.Contract(GENIEBOOK_ADDRESS, GenieBookABI, provider);
+      
+      console.log('🔧 Creating strike token contract instance...');
+      console.log('  strikeToken:', strikeToken);
+      
+      // Test if we can get code from strike token address  
+      const tokenCode = await provider.getCode(strikeToken);
+      console.log('  Strike token contract code length:', tokenCode.length);
+      
+      if (tokenCode === '0x') {
+        return res.status(500).json({ 
+          error: 'Strike token contract not deployed at address',
+          address: strikeToken
+        });
+      }
+      
+      strikeTokenContract = new ethers.Contract(strikeToken, MTKABI, provider);
+      
+      console.log('✅ Contract instances created successfully');
+    } catch (contractError) {
+      console.error('❌ Error creating contract instances:', contractError);
+      return res.status(500).json({ 
+        error: 'Failed to create contract instances',
+        details: contractError.message,
+        addresses: { GENIEBOOK_ADDRESS, strikeToken }
+      });
+    }
+    
+    // Create transaction data for createAndFundSinusoidalGenie
+    const createParams = [
+      underlyingToken,
+      strikeToken,
+      underlyingSymbol || 'UND',
+      strikeSymbol || 'STK',
+      positionSize,
+      0, // premium must be 0 for genies
+      oracle,
+      strikeNotional,
+      false, // makerIsLong = false (maker is short)
+      parseInt(expirySeconds),
+      amplitude1e18,
+      period1e18
+    ];
+    
+    console.log('🔧 createAndFundSinusoidalGenie parameters:', {
+      underlyingToken,
+      strikeToken,
+      underlyingSymbol: underlyingSymbol || 'UND',
+      strikeSymbol: strikeSymbol || 'STK',
+      positionSize: positionSize.toString(),
+      premium: '0',
+      oracle,
+      strikeNotional: strikeNotional.toString(),
+      makerIsLong: false,
+      expirySeconds: parseInt(expirySeconds),
+      amplitude1e18: amplitude1e18.toString(),
+      period1e18: period1e18.toString()
+    });
+    
+    const createData = genieBookContract.interface.encodeFunctionData('createAndFundSinusoidalGenie', createParams);
+    
+    // Create approval transaction data
+    // For genies: if maker is short, they need to approve underlyingToken for positionSize
+    // if maker is long, they approve strikeToken for strikeNotional
+    const makerIsLong = false; // We set maker as short
+    const tokenToApprove = makerIsLong ? strikeToken : underlyingToken;
+    const amountToApprove = makerIsLong ? strikeNotional : positionSize;
+    
+    console.log('📋 Token approval details:', {
+      makerIsLong,
+      tokenToApprove,
+      amountToApprove: amountToApprove.toString(),
+      strikeToken,
+      underlyingToken,
+      strikeNotional: strikeNotional.toString(),
+      positionSize: positionSize.toString()
+    });
+    
+    const approveTokenContract = new ethers.Contract(tokenToApprove, MTKABI, provider);
+    const approveData = approveTokenContract.interface.encodeFunctionData('approve', [GENIEBOOK_ADDRESS, amountToApprove]);
+    
+    console.log('✅ Genie contract creation transactions prepared');
+    
+    res.json({
+      success: true,
+      message: 'Sinusoidal genie creation transactions prepared for MetaMask signing',
+      data: {
+        createTransaction: {
+          to: GENIEBOOK_ADDRESS,
+          data: createData,
+          value: '0x0'
+        },
+        approveTransaction: {
+          to: tokenToApprove,
+          data: approveData,
+          value: '0x0'
+        },
+        tokenToApprove: tokenToApprove,
+        amountToApprove: amountToApprove.toString(),
+        futuresBookAddress: GENIEBOOK_ADDRESS, // Genies use GenieBook instead of FuturesBook
+        genieBookAddress: GENIEBOOK_ADDRESS,
+        fundingDetails: {
+          makerSide: 'short', // Genie makers are always short
+          fundingToken: tokenToApprove,
+          fundingAmount: ethers.formatUnits(amountToApprove, 18),
+          strikeNotional: ethers.formatUnits(strikeNotional, 18),
+          positionSize: ethers.formatUnits(positionSize, 18),
+          amplitude: sinusoidalAmplitude || '1.0',
+          period: sinusoidalPeriod || 'strike price'
+        },
+        estimatedGas: {
+          approve: '50000',
+          create: '800000'
+        }
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error preparing sinusoidal genie creation:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to prepare sinusoidal genie creation transaction',
+      details: error.message 
+    });
+  }
+});
+
+// Enter genie position
+app.post('/api/genie/:contractAddress/enter', async (req, res) => {
+  try {
+    const { contractAddress } = req.params;
+    const { userAddress } = req.body;
+    
+    if (!provider) {
+      return res.status(500).json({ error: 'Provider not initialized' });
+    }
+    
+    if (!contractAddress || !ethers.isAddress(contractAddress)) {
+      return res.status(400).json({ 
+        error: 'Invalid contract address format',
+        address: contractAddress 
+      });
+    }
+    
+    if (!userAddress || !ethers.isAddress(userAddress)) {
+      return res.status(400).json({ error: 'Invalid user address format' });
+    }
+    
+    console.log('🎯 Preparing genie enter transaction:', { contractAddress, userAddress });
+    
+    const genieBookContract = new ethers.Contract(GENIEBOOK_ADDRESS, GenieBookABI, provider);
+    
+    // Prepare enterAndPayPremium transaction data
+    const enterData = genieBookContract.interface.encodeFunctionData('enterAndPayPremium', [
+      contractAddress,
+      0 // premium amount is 0 for genies
+    ]);
+    
+    res.json({
+      success: true,
+      message: 'Genie enter transaction prepared for MetaMask signing',
+      data: {
+        enterTransaction: {
+          to: GENIEBOOK_ADDRESS,
+          data: enterData,
+          value: '0x0'
+        },
+        genieBookAddress: GENIEBOOK_ADDRESS
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error preparing genie enter transaction:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to prepare genie enter transaction',
+      details: error.message 
+    });
+  }
+});
+
+// Resolve and exercise genie
+app.post('/api/genie/:contractAddress/resolveAndExercise', async (req, res) => {
+  try {
+    const { contractAddress } = req.params;
+    const { userAddress } = req.body;
+    
+    if (!provider) {
+      return res.status(500).json({ error: 'Provider not initialized' });
+    }
+    
+    if (!contractAddress || !ethers.isAddress(contractAddress)) {
+      return res.status(400).json({ 
+        error: 'Invalid contract address format',
+        address: contractAddress 
+      });
+    }
+    
+    console.log('⚡ Preparing genie resolve and exercise transaction:', { contractAddress, userAddress });
+    
+    const genieBookContract = new ethers.Contract(GENIEBOOK_ADDRESS, GenieBookABI, provider);
+    
+    // Prepare resolveAndExercise transaction data
+    const exerciseData = genieBookContract.interface.encodeFunctionData('resolveAndExercise', [
+      contractAddress,
+      0 // exerciseAmount parameter
+    ]);
+    
+    res.json({
+      success: true,
+      message: 'Genie resolve and exercise transaction prepared for MetaMask signing',
+      data: {
+        resolveAndExerciseTransaction: {
+          to: GENIEBOOK_ADDRESS,
+          data: exerciseData,
+          value: '0x0'
+        },
+        genieBookAddress: GENIEBOOK_ADDRESS
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error preparing genie resolve and exercise transaction:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to prepare genie resolve and exercise transaction',
+      details: error.message 
+    });
+  }
+});
+
+// Resolve and reclaim genie
+app.post('/api/genie/:contractAddress/reclaim', async (req, res) => {
+  try {
+    const { contractAddress } = req.params;
+    
+    if (!provider) {
+      return res.status(500).json({ error: 'Provider not initialized' });
+    }
+    
+    if (!contractAddress || !ethers.isAddress(contractAddress)) {
+      return res.status(400).json({ 
+        error: 'Invalid contract address format',
+        address: contractAddress 
+      });
+    }
+    
+    console.log('💰 Preparing genie reclaim transaction:', { contractAddress });
+    
+    const genieBookContract = new ethers.Contract(GENIEBOOK_ADDRESS, GenieBookABI, provider);
+    
+    // Prepare resolveAndReclaim transaction data
+    const reclaimData = genieBookContract.interface.encodeFunctionData('resolveAndReclaim', [contractAddress]);
+    
+    res.json({
+      success: true,
+      message: 'Genie reclaim transaction prepared for MetaMask signing',
+      data: {
+        to: GENIEBOOK_ADDRESS,
+        data: reclaimData,
+        value: '0x0'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error preparing genie reclaim transaction:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to prepare genie reclaim transaction',
       details: error.message 
     });
   }
