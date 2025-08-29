@@ -4,14 +4,16 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/proxy/Clones.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
 import "./SinusoidalGenie.sol";
+import "./hPolynomialGenie.sol";
 
 contract GenieBook {
     using SafeERC20 for IERC20;
 
     // Implementation addresses for different Genie payoff types
-    address public sinusoidalGenieImpl;   // sinusoidal Genie implementation
-    address public polynomialGenieImpl;   // placeholder (not implemented yet)
+    address public sinusoidalGenieImpl;    // SinusoidalGenie implementation
+    address public polynomialGenieImpl;    // PolynomialGenie implementation
 
     address[] public genieContracts;
 
@@ -27,13 +29,13 @@ contract GenieBook {
         string underlyingSymbol;
         string strikeSymbol;
 
-        uint256 strikePrice;    // fixed strike (1e18-scaled)
-        uint256 positionSize;   // quantity of underlying (1e18 units)
-        uint256 premium;        // always 0 for Genie contracts
+        uint256 strikePrice;     // fixed strike (1e18-scaled)
+        uint256 positionSize;    // quantity of underlying (1e18 units)
+        uint256 premium;         // always 0 for Genie contracts
 
         uint256 expiry;
         uint256 priceAtExpiry;
-        uint256 exercisedAmount;
+        uint256 exercisedAmount; // stored as "long's payout" reported by clone
         bool isExercised;
         bool isResolved;
 
@@ -42,7 +44,7 @@ contract GenieBook {
 
         // e.g. "SinusoidalGenie" | "PolynomialGenie"
         string payoffType;
-        uint8 payoffPower;      // unused for sinusoidal & polynomial, kept for struct compatibility
+        uint8 payoffPower;       // unused (kept for struct compatibility)
     }
 
     mapping(address => GenieMeta) public genieMetadata;
@@ -58,23 +60,29 @@ contract GenieBook {
         uint256 period1e18
     );
 
-    // Placeholder event (future use)
     event PolynomialGenieCreated(
         address indexed creator,
         address indexed instance,
         bool makerIsLong,
         uint256 strikeNotional,
         uint256 positionSize,
-        bytes params // e.g., polynomial coefficients encoded for future implementation
+        uint256 fullPayLine1e18
     );
 
     // Shared events
     event GenieActivated(address indexed instance, address indexed long, address indexed short, uint256 expiry);
-    event GenieExercised(address indexed instance, uint256 strikeTokenAmount);
+
+    /// @notice Emitted after net settlement is executed.
+    /// @param instance The Genie clone.
+    /// @param longPayout The long's *raw* payout reported by the clone (before netting).
+    /// @param payer The address that actually paid after netting (0x0 if no net transfer).
+    /// @param receiver The address that actually received after netting (0x0 if no net transfer).
+    /// @param netAmount The net ERC20 amount moved (0 if perfectly balanced).
+    event GenieExercised(address indexed instance, uint256 longPayout, address payer, address receiver, uint256 netAmount);
 
     constructor(address _sinusoidalGenieImpl, address _polynomialGenieImpl) {
         sinusoidalGenieImpl = _sinusoidalGenieImpl;
-        polynomialGenieImpl = _polynomialGenieImpl; // can be zero for now
+        polynomialGenieImpl = _polynomialGenieImpl;
     }
 
     // ------------------------------------------------------------------------
@@ -95,6 +103,7 @@ contract GenieBook {
         uint256 _period1e18
     ) external returns (address clone) {
         require(_premiumMustBe0 == 0, "GENIE: premium must be 0");
+        require(sinusoidalGenieImpl != address(0), "Sinusoidal impl not set");
 
         clone = Clones.clone(sinusoidalGenieImpl);
         SinusoidalGenie(clone).initialize(
@@ -110,18 +119,22 @@ contract GenieBook {
             address(this)
         );
 
-        // Set amplitude and period before funding
+        // Configure sinusoidal params before funding
         SinusoidalGenie(clone).setSinusoidalParameters(_amplitude1e18, _period1e18);
 
+        // Move maker funding into the clone
         if (_makerIsLong) {
             IERC20(_strikeToken).safeTransferFrom(msg.sender, clone, _strikeNotional);
         } else {
             IERC20(_underlyingToken).safeTransferFrom(msg.sender, clone, _positionSize);
         }
 
+        // Lock strike & set expiry on the clone
         SinusoidalGenie(clone).fund(_strikeNotional, _expirySeconds);
 
         uint256 fixedStrike = _readStrike(clone);
+
+        // Register
         genieContracts.push(clone);
         isKnownGenieClone[clone] = true;
         if (_makerIsLong) {
@@ -162,23 +175,90 @@ contract GenieBook {
     }
 
     // ------------------------------------------------------------------------
-    // POLYNOMIAL GENIE (PLACEHOLDER)
+    // POLYNOMIAL GENIE
     // ------------------------------------------------------------------------
     function createAndFundPolynomialGenie(
-        address /* _underlyingToken */,
-        address /* _strikeToken */,
-        string memory /* _underlyingSymbol */,
-        string memory /* _strikeSymbol */,
-        uint256 /* _positionSize */,
+        address _underlyingToken,
+        address _strikeToken,
+        string memory _underlyingSymbol,
+        string memory _strikeSymbol,
+        uint256 _positionSize,
         uint256 _premiumMustBe0,
-        address /* _oracle */,
-        uint256 /* _strikeNotional */,
-        bool /* _makerIsLong */,
-        uint256 /* _expirySeconds */,
-        bytes memory /* _polyParams */ // e.g., encoded coefficients for future implementation
-    ) external pure returns (address) {
+        address _oracle,
+        uint256 _strikeNotional,
+        bool _makerIsLong,
+        uint256 _expirySeconds,
+        uint256 _fullPayLine1e18
+    ) external returns (address clone) {
         require(_premiumMustBe0 == 0, "GENIE: premium must be 0");
-        revert("PolynomialGenie: not implemented yet");
+        require(polynomialGenieImpl != address(0), "Polynomial impl not set");
+
+        clone = Clones.clone(polynomialGenieImpl);
+        PolynomialGenie(clone).initialize(
+            msg.sender,
+            _underlyingToken,
+            _strikeToken,
+            _underlyingSymbol,
+            _strikeSymbol,
+            _makerIsLong ? 1 : 0,
+            _positionSize,
+            0,
+            _oracle,
+            address(this)
+        );
+
+        // Set the ONLY parameter: the vertical 100%-line L
+        PolynomialGenie(clone).setFullPayLine(_fullPayLine1e18);
+
+        // Maker funding into the clone
+        if (_makerIsLong) {
+            IERC20(_strikeToken).safeTransferFrom(msg.sender, clone, _strikeNotional);
+        } else {
+            IERC20(_underlyingToken).safeTransferFrom(msg.sender, clone, _positionSize);
+        }
+
+        // Lock strike & set expiry on the clone
+        PolynomialGenie(clone).fund(_strikeNotional, _expirySeconds);
+
+        uint256 fixedStrike = _readStrike(clone);
+
+        // Register
+        genieContracts.push(clone);
+        isKnownGenieClone[clone] = true;
+        if (_makerIsLong) {
+            longPosition[clone] = msg.sender;
+        } else {
+            shortPosition[clone] = msg.sender;
+        }
+
+        genieMetadata[clone] = GenieMeta({
+            genieAddress: clone,
+            underlyingToken: _underlyingToken,
+            strikeToken: _strikeToken,
+            underlyingSymbol: _underlyingSymbol,
+            strikeSymbol: _strikeSymbol,
+            strikePrice: fixedStrike,
+            positionSize: _positionSize,
+            premium: 0,
+            expiry: 0,
+            priceAtExpiry: 0,
+            exercisedAmount: 0,
+            isExercised: false,
+            isResolved: false,
+            long: _makerIsLong ? msg.sender : address(0),
+            short: _makerIsLong ? address(0) : msg.sender,
+            payoffType: "PolynomialGenie",
+            payoffPower: 0
+        });
+
+        emit PolynomialGenieCreated(
+            msg.sender,
+            clone,
+            _makerIsLong,
+            _strikeNotional,
+            _positionSize,
+            _fullPayLine1e18
+        );
     }
 
     // ------------------------------------------------------------------------
@@ -198,15 +278,15 @@ contract GenieBook {
         } else if (shortVacant && !longVacant) {
             meta.short = msg.sender;
         } else {
-            // If both positions were vacant (should not happen in normal flow), default to long
+            // If both positions were vacant (shouldn't happen), default to long
             meta.long = msg.sender;
         }
 
-        // Trigger entry on the clone contract
+        // Trigger entry on the clone
         (bool okEnter, ) = genieAddress.call(abi.encodeWithSignature("enterAsLong(address)", msg.sender));
         require(okEnter, "enterAsLong failed");
 
-        // Fetch final participant addresses and expiry from the clone
+        // Fetch participants and expiry from the clone
         (bool okL, bytes memory dataL) = genieAddress.call(abi.encodeWithSignature("long()"));
         require(okL, "long() failed");
         address finalLong = abi.decode(dataL, (address));
@@ -219,7 +299,6 @@ contract GenieBook {
         require(okE, "expiry() failed");
         uint256 finalExpiry = abi.decode(dataE, (uint256));
 
-        // Update metadata with the now-active contract details
         meta.long = finalLong;
         meta.short = finalShort;
         meta.expiry = finalExpiry;
@@ -245,7 +324,7 @@ contract GenieBook {
             meta.isResolved = true;
         }
 
-        // Long side attempts to exercise (payout will be determined in clone contract)
+        // Long side attempts to exercise (payout determined in clone)
         (bool s2, ) = genieAddress.call(abi.encodeWithSignature("exercise(uint256,address)", 0, meta.long));
         require(s2, "exercise() failed");
     }
@@ -271,28 +350,60 @@ contract GenieBook {
         require(s2, "reclaim() failed");
     }
 
-    function notifyExercised(uint256 strikeTokenAmount) external {
+    /**
+     * @notice Called by Genie clones during settlement with the **long's payout** in strike tokens.
+     * We compute the **net** transfer vs. the short's payout (= notional - longPayout)
+     * and move only the difference:
+     *   - if longPayout > shortPayout: transfer (longPayout - shortPayout) from SHORT -> LONG
+     *   - if shortPayout > longPayout: transfer (shortPayout - longPayout) from LONG -> SHORT
+     *   - equal => no net transfer
+     *
+     * IMPORTANT: Both parties must have granted allowance to this Book for the strike token.
+     */
+    function notifyExercised(uint256 longPayout) external {
         require(isKnownGenieClone[msg.sender], "Unknown Genie");
 
         GenieMeta storage meta = genieMetadata[msg.sender];
         require(!meta.isExercised, "Already exercised");
 
+        // Record raw long payout
         meta.isExercised = true;
-        meta.exercisedAmount = strikeTokenAmount;
+        meta.exercisedAmount = longPayout;
 
-        // NOTE: This direction rule mirrors the previous FuturesBook behavior.
-        // If your SinusoidalGenie uses sine sign to decide winner, you can encode the
-        // direction in the payout callback or pass it here. For now we keep legacy logic.
-        bool longWins = (meta.priceAtExpiry > meta.strikePrice);
-        address payer = longWins ? meta.short : meta.long;
-        address receiver = longWins ? meta.long : meta.short;
+        // Compute notional in strike tokens (1e18 scale)
+        uint256 notional = (meta.strikePrice * meta.positionSize) / 1e18;
 
-        if (strikeTokenAmount > 0) {
-            IERC20(meta.strikeToken).safeTransferFrom(payer, address(this), strikeTokenAmount);
-            IERC20(meta.strikeToken).safeTransfer(receiver, strikeTokenAmount);
+        // Safety clamps
+        if (longPayout > notional) {
+            longPayout = notional;
         }
 
-        emit GenieExercised(msg.sender, strikeTokenAmount);
+        uint256 shortPayout = notional - longPayout;
+
+        address payer = address(0);
+        address receiver = address(0);
+        uint256 net;
+
+        if (longPayout > shortPayout) {
+            // Short owes Long
+            net = longPayout - shortPayout;
+            payer = meta.short;
+            receiver = meta.long;
+        } else if (shortPayout > longPayout) {
+            // Long owes Short
+            net = shortPayout - longPayout;
+            payer = meta.long;
+            receiver = meta.short;
+        } else {
+            net = 0;
+        }
+
+        if (net > 0) {
+            IERC20(meta.strikeToken).safeTransferFrom(payer, address(this), net);
+            IERC20(meta.strikeToken).safeTransfer(receiver, net);
+        }
+
+        emit GenieExercised(msg.sender, longPayout, payer, receiver, net);
     }
 
     // Helper to read the strike price from a clone (after funding)
@@ -302,12 +413,21 @@ contract GenieBook {
         strike = abi.decode(data, (uint256));
     }
 
-    // View functions to retrieve all Genie contracts and metadata
+    // View functions
     function getAllGenies() external view returns (address[] memory) {
         return genieContracts;
     }
 
     function getGenieMeta(address genieAddress) external view returns (GenieMeta memory) {
         return genieMetadata[genieAddress];
+    }
+
+    // Optional admin setters for impl addresses (add access control as needed)
+    function setSinusoidalImpl(address _impl) external {
+        sinusoidalGenieImpl = _impl;
+    }
+
+    function setPolynomialImpl(address _impl) external {
+        polynomialGenieImpl = _impl;
     }
 }

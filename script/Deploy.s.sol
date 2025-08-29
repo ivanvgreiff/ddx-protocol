@@ -6,6 +6,7 @@ import "forge-std/console.sol";
 
 import "../contracts/GenieBook.sol";
 import "../contracts/SinusoidalGenie.sol";
+import "../contracts/hPolynomialGenie.sol";
 
 contract DeployGenieContracts is Script {
     function run() external {
@@ -15,19 +16,22 @@ contract DeployGenieContracts is Script {
 
         vm.startBroadcast();
 
-        // Deploy Sinusoidal Genie implementation
+        // 1) Deploy implementations
         SinusoidalGenie sinusoidalImpl = new SinusoidalGenie();
+        PolynomialGenie polynomialImpl = new PolynomialGenie();
 
-        // Polynomial placeholder can be zero for now
-        GenieBook book = new GenieBook(address(sinusoidalImpl), address(0));
+        // 2) Deploy the factory/book with both impls wired
+        GenieBook book = new GenieBook(address(sinusoidalImpl), address(polynomialImpl));
 
         vm.stopBroadcast();
 
+        // 3) Log addresses
         console.log("SinusoidalGenie Impl: ", address(sinusoidalImpl));
+        console.log("PolynomialGenie Impl: ", address(polynomialImpl));
         console.log("GenieBook Factory:    ", address(book));
 
-        // Sanity: ensure wiring is correct
+        // 4) Sanity checks
         require(book.sinusoidalGenieImpl() == address(sinusoidalImpl), "Book wired to wrong sinusoidal impl");
-        // polynomialGenieImpl is allowed to be zero at this stage
+        require(book.polynomialGenieImpl() == address(polynomialImpl), "Book wired to wrong polynomial impl");
     }
 }

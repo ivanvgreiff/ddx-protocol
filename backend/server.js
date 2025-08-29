@@ -115,6 +115,7 @@ const TwoTKABI = require('../utils/TwoTKContractABI.json');
 const FuturesBookABI = require('../utils/FuturesBookABI.json');
 const LinearFiniteFuturesABI = require('../utils/LinearFiniteFuturesABI.json');
 const GenieBookABI = require('../utils/GenieBookABI.json');
+const PolynomialGenieABI = require('../utils/PolynomialGenieABI.json');
 
 // Utility function to add delay
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -434,6 +435,24 @@ app.get('/api/blockchain/status', async (req, res) => {
 // Get account balance
 
 // Get token balance
+
+// Get oracle address
+app.get('/api/oracle/address', async (req, res) => {
+  try {
+    const oracleAddress = process.env.ORACLE_ADDRESS;
+    if (!oracleAddress) {
+      return res.status(500).json({ error: 'Oracle address not configured' });
+    }
+    
+    res.json({
+      success: true,
+      oracleAddress: oracleAddress
+    });
+  } catch (error) {
+    console.error('Error getting oracle address:', error);
+    res.status(500).json({ error: 'Failed to get oracle address' });
+  }
+});
 
 // Get oracle prices
 app.get('/api/oracle/prices', async (req, res) => {
@@ -1868,7 +1887,8 @@ app.get('/api/factory/all-genies', async (req, res) => {
       provider,
       GENIEBOOK_ADDRESS,
       GenieBookABI,
-      SinusoidalGenieABI
+      SinusoidalGenieABI,
+      PolynomialGenieABI
     );
     
     // Check if multicall is available
@@ -2182,6 +2202,219 @@ app.post('/api/genie/create-sinusoidal', async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Failed to prepare sinusoidal genie creation transaction',
+      details: error.message 
+    });
+  }
+});
+
+// Create polynomial genie contract
+app.post('/api/genie/create-polynomial', async (req, res) => {
+  try {
+    const {
+      underlyingToken,
+      strikeToken,
+      underlyingSymbol,
+      strikeSymbol,
+      strikePrice,
+      optionSize,
+      oracle,
+      userAddress,
+      expirySeconds = '300',
+      fullPayLine = '1.0' // Default fullPayLine value
+    } = req.body;
+
+    console.log('🧞 Creating polynomial genie contract with parameters:', {
+      underlyingToken,
+      strikeToken,
+      underlyingSymbol,
+      strikeSymbol,
+      strikePrice,
+      optionSize,
+      oracle,
+      userAddress,
+      expirySeconds,
+      fullPayLine
+    });
+
+    if (!provider) {
+      return res.status(500).json({ error: 'Provider not initialized' });
+    }
+
+    // Validate required fields
+    if (!underlyingToken || !strikeToken || !strikePrice || !optionSize || !oracle || !userAddress) {
+      return res.status(400).json({ 
+        error: 'Missing required fields',
+        required: ['underlyingToken', 'strikeToken', 'strikePrice', 'optionSize', 'oracle', 'userAddress']
+      });
+    }
+
+    // Validate ethereum addresses
+    if (!ethers.isAddress(underlyingToken) || !ethers.isAddress(strikeToken) || 
+        !ethers.isAddress(oracle) || !ethers.isAddress(userAddress)) {
+      return res.status(400).json({ error: 'Invalid ethereum address format' });
+    }
+
+    // Parse and validate fullPayLine
+    const fullPayLineFloat = parseFloat(fullPayLine);
+    if (!fullPayLineFloat || fullPayLineFloat <= 0) {
+      return res.status(400).json({ 
+        error: 'Invalid fullPayLine parameter',
+        details: 'fullPayLine must be a positive number greater than 0'
+      });
+    }
+
+    // Convert fullPayLine to 1e18 scale  
+    const fullPayLine1e18 = ethers.parseUnits(fullPayLineFloat.toString(), 18);
+
+    // Parse other values
+    const strikePricePerUnit = ethers.parseUnits(strikePrice.toString(), 18);
+    const positionSize = ethers.parseUnits(optionSize.toString(), 18);
+    
+    // Calculate strike notional: strikePrice * positionSize
+    const strikeNotional = (strikePricePerUnit * positionSize) / ethers.parseUnits("1", 18);
+    
+    console.log('💰 Calculated financial parameters:', {
+      strikePricePerUnit: ethers.formatUnits(strikePricePerUnit, 18),
+      positionSize: ethers.formatUnits(positionSize, 18),
+      strikeNotional: ethers.formatUnits(strikeNotional, 18),
+      fullPayLine1e18: ethers.formatUnits(fullPayLine1e18, 18)
+    });
+
+    // Create contract instances to generate transaction data
+    let genieBookContract;
+    let strikeTokenContract;
+    
+    try {
+      console.log('🔧 Creating GenieBook contract instance...');
+      console.log('  GENIEBOOK_ADDRESS:', GENIEBOOK_ADDRESS);
+      console.log('  GenieBookABI length:', GenieBookABI.length);
+      console.log('  Provider:', !!provider);
+      
+      // Test if we can get code from GenieBook address
+      const genieBookCode = await provider.getCode(GENIEBOOK_ADDRESS);
+      console.log('  GenieBook contract code length:', genieBookCode.length);
+      
+      if (genieBookCode === '0x') {
+        return res.status(500).json({ 
+          error: 'GenieBook contract not deployed at address',
+          address: GENIEBOOK_ADDRESS
+        });
+      }
+      
+      genieBookContract = new ethers.Contract(GENIEBOOK_ADDRESS, GenieBookABI, provider);
+      
+      console.log('🔧 Creating strike token contract instance...');
+      console.log('  strikeToken:', strikeToken);
+      
+      // Test if we can get code from strike token address  
+      const strikeTokenCode = await provider.getCode(strikeToken);
+      console.log('  Strike token contract code length:', strikeTokenCode.length);
+      
+      if (strikeTokenCode === '0x') {
+        return res.status(400).json({ 
+          error: 'Strike token contract not found at address',
+          address: strikeToken
+        });
+      }
+      
+      strikeTokenContract = new ethers.Contract(strikeToken, MTKABI, provider);
+      
+    } catch (contractError) {
+      console.error('❌ Contract creation failed:', contractError);
+      return res.status(500).json({ 
+        error: 'Failed to create contract instances',
+        details: contractError.message,
+        addresses: { GENIEBOOK_ADDRESS, strikeToken }
+      });
+    }
+    
+    // Create transaction data for createAndFundPolynomialGenie
+    const createParams = [
+      underlyingToken,
+      strikeToken,
+      underlyingSymbol || 'UND',
+      strikeSymbol || 'STK',
+      positionSize,
+      0, // premium must be 0 for genies
+      oracle,
+      strikeNotional,
+      false, // makerIsLong = false (maker is short)
+      parseInt(expirySeconds),
+      fullPayLine1e18
+    ];
+    
+    console.log('🔧 createAndFundPolynomialGenie parameters:', {
+      underlyingToken,
+      strikeToken,
+      underlyingSymbol: underlyingSymbol || 'UND',
+      strikeSymbol: strikeSymbol || 'STK',
+      positionSize: positionSize.toString(),
+      premium: '0',
+      oracle,
+      strikeNotional: strikeNotional.toString(),
+      makerIsLong: false,
+      expirySeconds: parseInt(expirySeconds),
+      fullPayLine1e18: fullPayLine1e18.toString()
+    });
+    
+    const createData = genieBookContract.interface.encodeFunctionData('createAndFundPolynomialGenie', createParams);
+    
+    // Create approval transaction data
+    // For genies: if maker is short, they need to approve underlyingToken for positionSize
+    // if maker is long, they approve strikeToken for strikeNotional
+    const makerIsLong = false; // We set maker as short
+    const tokenToApprove = makerIsLong ? strikeToken : underlyingToken;
+    const amountToApprove = makerIsLong ? strikeNotional : positionSize;
+    
+    console.log('📋 Token approval details:', {
+      makerIsLong,
+      tokenToApprove,
+      amountToApprove: ethers.formatUnits(amountToApprove, 18)
+    });
+
+    const tokenContract = new ethers.Contract(tokenToApprove, MTKABI, provider);
+    const approveData = tokenContract.interface.encodeFunctionData('approve', [
+      GENIEBOOK_ADDRESS,
+      amountToApprove
+    ]);
+
+    res.json({
+      success: true,
+      message: 'Polynomial genie creation transactions prepared for MetaMask signing',
+      data: {
+        createTransaction: {
+          to: GENIEBOOK_ADDRESS,
+          data: createData,
+          value: '0x0'
+        },
+        approveTransaction: {
+          to: tokenToApprove,
+          data: approveData,
+          value: '0x0'
+        },
+        tokenToApprove: tokenToApprove,
+        amountToApprove: amountToApprove.toString(),
+        futuresBookAddress: GENIEBOOK_ADDRESS, // Genies use GenieBook instead of FuturesBook
+        genieBookAddress: GENIEBOOK_ADDRESS,
+        fundingDetails: {
+          makerSide: 'short', // Genie makers are always short
+          fundingToken: tokenToApprove,
+          fundingAmount: ethers.formatUnits(amountToApprove, 18),
+          strikeNotional: ethers.formatUnits(strikeNotional, 18),
+          positionSize: ethers.formatUnits(positionSize, 18),
+          fullPayLine: fullPayLine || '1.0'
+        },
+        estimatedGas: {
+          approve: '50000',
+          create: '800000'
+        }
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error preparing polynomial genie creation:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to prepare polynomial genie creation transaction',
       details: error.message 
     });
   }

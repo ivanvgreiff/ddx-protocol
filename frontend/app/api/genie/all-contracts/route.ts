@@ -8,7 +8,9 @@ export async function GET(request: NextRequest) {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
       },
+      cache: 'no-store',
     })
     
     if (!response.ok) {
@@ -16,7 +18,11 @@ export async function GET(request: NextRequest) {
     }
     
     const data = await response.json()
-    return NextResponse.json(data)
+    const res = NextResponse.json(data)
+    res.headers.set('Cache-Control', 'no-cache, no-store, must-revalidate')
+    res.headers.set('Pragma', 'no-cache')
+    res.headers.set('Expires', '0')
+    return res
   } catch (error) {
     console.error('Error proxying all genies:', error)
     return NextResponse.json(

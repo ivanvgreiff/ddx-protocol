@@ -446,7 +446,7 @@ export default function GenieBookPage() {
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-foreground mb-4">Genie Book</h1>
           <p className="text-muted-foreground max-w-2xl mx-auto">
-            Trade sinusoidal genie contracts with oscillating payoffs. Enter positions and ride the sinusoidal wave as payoffs cycle between 0% and 100% of notional based on price movement.
+            Trade genie contracts with advanced mathematical payoff functions. Choose between sinusoidal genies with oscillating sine wave payoffs or polynomial genies with complex quintic polynomial curves.
           </p>
         </div>
 
@@ -516,12 +516,27 @@ export default function GenieBookPage() {
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-lg">
-                        {(() => {
-                          // Determine contract type and display name
-                          const contractType = genie.contractType || genie.payoffType || genie.optionType || 'SinusoidalGenie'
-                          if (contractType.toLowerCase().includes('sinusoidal')) {
+{(() => {
+                          // Determine contract type and display name  
+                          console.log('DEBUG - Full genie object:', genie);
+                          console.log('DEBUG - genie.contractType:', genie.contractType);
+                          console.log('DEBUG - genie.payoffType:', genie.payoffType);
+                          console.log('DEBUG - genie.optionType:', genie.optionType);
+                          
+                          const contractType = genie.payoffType || genie.optionType || 'SinusoidalGenie'
+                          console.log('DEBUG - Final contractType:', contractType);
+                          console.log('DEBUG - contractType.toLowerCase():', contractType.toLowerCase());
+                          console.log('DEBUG - includes polynomial?', contractType.toLowerCase().includes('polynomial'));
+                          console.log('DEBUG - includes sinusoidal?', contractType.toLowerCase().includes('sinusoidal'));
+                          
+                          if (contractType.toLowerCase().includes('polynomial')) {
+                            console.log('DEBUG - Returning: Polynomial Genie');
+                            return 'Polynomial Genie'
+                          } else if (contractType.toLowerCase().includes('sinusoidal')) {
+                            console.log('DEBUG - Returning: Sinusoidal Genie');
                             return 'Sinusoidal Genie'
                           }
+                          console.log('DEBUG - Returning: Default Sinusoidal Genie');
                           return 'Sinusoidal Genie'
                         })()}
                       </CardTitle>
@@ -672,24 +687,34 @@ export default function GenieBookPage() {
 
                     {/* Future Payoff Chart */}
                     <div className="mt-4 mb-2 flex justify-center">
-                      <OptionPayoffChart
-                        optionType="CALL"
-                        payoffType="Sinusoidal"
-                        sinusoidalAmplitude={genie.amplitude || 1.0}
-                        sinusoidalPeriod={genie.period || fromUnits(genie.strikePrice || "1000000000000000000", 18)}
-                        strikePrice={genie.strikePrice || "1000000000000000000"}
-                        optionSize={genie.optionSize}
-                        strikeSymbol={genie.strikeSymbol || 'MTK'}
-                        underlyingSymbol={genie.underlyingSymbol || '2TK'}
-                        currentSpotPrice={genie.currentPrice}
-                        decimals={18}
-                        compact={true}
-                        className="h-48"
-                        isShortPosition={account && genie.short && account.toLowerCase() === genie.short.toLowerCase()}
-                        isNonUserContract={!account || (!genie.short || account.toLowerCase() !== genie.short.toLowerCase()) && (!genie.long || account.toLowerCase() !== genie.long.toLowerCase())}
-                        isFuturesContract={true}
-                        isGenieContract={true}
-                      />
+{(() => {
+                        const contractType = genie.payoffType || genie.optionType || 'SinusoidalGenie'
+                        const isPolynomial = contractType.toLowerCase().includes('polynomial')
+                        
+                        return (
+                          <OptionPayoffChart
+                            optionType="CALL"
+                            payoffType={isPolynomial ? "Polynomial" : "Sinusoidal"}
+                            {...(isPolynomial ? {
+                              polynomialFullPayLine: genie.fullPayLine || 1.0
+                            } : {
+                              sinusoidalAmplitude: genie.amplitude || 1.0,
+                              sinusoidalPeriod: genie.period || fromUnits(genie.strikePrice || "1000000000000000000", 18)
+                            })}
+                            strikePrice={genie.strikePrice || "1000000000000000000"}
+                            optionSize={genie.optionSize}
+                            strikeSymbol={genie.strikeSymbol || 'MTK'}
+                            underlyingSymbol={genie.underlyingSymbol || '2TK'}
+                            currentSpotPrice={genie.currentPrice}
+                            decimals={18}
+                            compact={true}
+                            className="h-48"
+                            isShortPosition={account && genie.short && account.toLowerCase() === genie.short.toLowerCase()}
+                            isNonUserContract={!account || (!genie.short || account.toLowerCase() !== genie.short.toLowerCase()) && (!genie.long || account.toLowerCase() !== genie.long.toLowerCase())}
+                            isGenieContract={true}
+                          />
+                        )
+                      })()}
                     </div>
 
                     <div className="flex gap-2 pt-4">
@@ -887,12 +912,28 @@ export default function GenieBookPage() {
             <CardContent className="space-y-4">
               <div>
                 <span className="text-sm text-muted-foreground">Contract Details:</span>
-                <div className="font-medium space-y-1">
-                  <div>Type: {selectedContract.payoffType || 'Sinusoidal Genie'}</div>
-                  <div>Size: {formatTokenAmount(selectedContract.optionSize, selectedContract.underlyingSymbol || '2TK')}</div>
-                  <div>Strike: {selectedContract.strikePrice ? formatTokenAmount(selectedContract.strikePrice, selectedContract.strikeSymbol || 'MTK') : 'Set on activation'}</div>
-                  <div>No Premium Required</div>
-                </div>
+{(() => {
+                  const contractType = selectedContract.payoffType || 'SinusoidalGenie'
+                  const isPolynomial = contractType.toLowerCase().includes('polynomial')
+                  const displayType = isPolynomial ? 'Polynomial Genie' : 'Sinusoidal Genie'
+                  
+                  return (
+                    <div className="font-medium space-y-1">
+                      <div>Type: {displayType}</div>
+                      <div>Size: {formatTokenAmount(selectedContract.optionSize, selectedContract.underlyingSymbol || '2TK')}</div>
+                      <div>Strike: {selectedContract.strikePrice ? formatTokenAmount(selectedContract.strikePrice, selectedContract.strikeSymbol || 'MTK') : 'Set on activation'}</div>
+                      {isPolynomial ? (
+                        <div>Full Pay Line: {selectedContract.fullPayLine || '1.0'}</div>
+                      ) : (
+                        <>
+                          <div>Amplitude: {selectedContract.amplitude || '1.0'}</div>
+                          <div>Period: {selectedContract.period ? selectedContract.period.toString() : 'Strike Price'}</div>
+                        </>
+                      )}
+                      <div>No Premium Required</div>
+                    </div>
+                  )
+                })()}
               </div>
               
               <div className="flex gap-2 pt-4">

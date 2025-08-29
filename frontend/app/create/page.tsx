@@ -86,10 +86,13 @@ export default function CreateOptionPage() {
   const [sigmoidIntensity, setSigmoidIntensity] = useState('1.0') // For sigmoid payoffs
   const [sinusoidalAmplitude, setSinusoidalAmplitude] = useState('1.0') // For sinusoidal genies
   const [sinusoidalPeriod, setSinusoidalPeriod] = useState('') // For sinusoidal genies (defaults to strike price)
+  const [polynomialFullPayLine, setPolynomialFullPayLine] = useState('1.0') // For polynomial genies
+  const [genieType, setGenieType] = useState('sinusoidal') // 'sinusoidal' or 'polynomial' - only for genies
   const [makerSide, setMakerSide] = useState('short') // 'long' or 'short' - only for futures
   const [expirySeconds, setExpirySeconds] = useState('300') // Default 5 minutes for futures
   const [isCreating, setIsCreating] = useState(false)
   const [contractDeploymentInfo, setContractDeploymentInfo] = useState<any>(null)
+
 
   // Fetch oracle prices for token selection
   const { data: oraclePrices } = useQuery('oraclePrices', async () => {
@@ -155,9 +158,12 @@ export default function CreateOptionPage() {
           makerSide: makerSide,
           expirySeconds: expirySeconds || '300'
         }),
-        ...(contractType === 'genie' && {
+        ...(contractType === 'genie' && genieType === 'sinusoidal' && {
           sinusoidalAmplitude: sinusoidalAmplitude,
           sinusoidalPeriod: sinusoidalPeriod
+        }),
+        ...(contractType === 'genie' && genieType === 'polynomial' && {
+          fullPayLine: polynomialFullPayLine
         })
       }
       
@@ -165,7 +171,7 @@ export default function CreateOptionPage() {
       if (contractType === 'future') {
         endpoint = '/api/futures/create-future'
       } else if (contractType === 'genie') {
-        endpoint = '/api/genie/create-sinusoidal'
+        endpoint = genieType === 'polynomial' ? '/api/genie/create-polynomial' : '/api/genie/create-sinusoidal'
       } else {
         endpoint = optionType === 'call' ? '/api/option/create-call' : '/api/option/create-put'
       }
@@ -364,9 +370,14 @@ export default function CreateOptionPage() {
                     transactionHash: deployTxHash,
                     contractAddress: contractAddress,
                     contractType: 'genie',
-                    payoffType: 'Sinusoidal',
-                    sinusoidalAmplitude: sinusoidalAmplitude,
-                    sinusoidalPeriod: sinusoidalPeriod,
+                    payoffType: genieType === 'polynomial' ? 'Polynomial' : 'Sinusoidal',
+                    ...(genieType === 'sinusoidal' && {
+                      sinusoidalAmplitude: sinusoidalAmplitude,
+                      sinusoidalPeriod: sinusoidalPeriod
+                    }),
+                    ...(genieType === 'polynomial' && {
+                      polynomialFullPayLine: polynomialFullPayLine
+                    }),
                     shortAddress: account,
                     underlyingToken: formData.underlyingToken,
                     strikeToken: formData.strikeToken,
@@ -652,8 +663,27 @@ export default function CreateOptionPage() {
                 </div>
               )}
 
-              {/* Amplitude input for Sinusoidal genies */}
+              {/* Genie Type Selection */}
               {contractType === 'genie' && (
+                <div>
+                  <Label htmlFor="genieType">Genie Type</Label>
+                  <Select value={genieType} onValueChange={setGenieType}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select genie type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="sinusoidal">Sinusoidal Genie</SelectItem>
+                      <SelectItem value="polynomial">Polynomial Genie</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Choose the payoff function type for your genie contract.
+                  </p>
+                </div>
+              )}
+
+              {/* Amplitude input for Sinusoidal genies */}
+              {contractType === 'genie' && genieType === 'sinusoidal' && (
                 <div>
                   <Label htmlFor="sinusoidalAmplitude">Sinusoidal Amplitude</Label>
                   <Input
@@ -674,7 +704,7 @@ export default function CreateOptionPage() {
               )}
 
               {/* Period input for Sinusoidal genies */}
-              {contractType === 'genie' && (
+              {contractType === 'genie' && genieType === 'sinusoidal' && (
                 <div>
                   <Label htmlFor="sinusoidalPeriod">Sinusoidal Period</Label>
                   <Input
@@ -687,6 +717,27 @@ export default function CreateOptionPage() {
                   />
                   <p className="text-sm text-muted-foreground mt-1">
                     Period of the sinusoidal wave. Leave blank to default to strike price value.
+                  </p>
+                </div>
+              )}
+
+              {/* Full Pay Line input for Polynomial genies */}
+              {contractType === 'genie' && genieType === 'polynomial' && (
+                <div>
+                  <Label htmlFor="polynomialFullPayLine">Full Pay Line</Label>
+                  <Input
+                    id="polynomialFullPayLine"
+                    type="number"
+                    step="0.1"
+                    value={polynomialFullPayLine}
+                    onChange={(e) => setPolynomialFullPayLine(e.target.value)}
+                    placeholder="1.0"
+                    min="0.1"
+                    max="10.0"
+                    required
+                  />
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Vertical line where the polynomial reaches 100% payout (0.1-10.0). Controls the sensitivity of the payoff curve.
                   </p>
                 </div>
               )}
@@ -810,9 +861,12 @@ export default function CreateOptionPage() {
                   name="oracle"
                   value={formData.oracle}
                   onChange={handleInputChange}
-                  placeholder="0x..."
+                  placeholder="0xba7603E31a7C5989cDF8610557F53117Cab4736f"
                   required
                 />
+                <p className="text-sm text-muted-foreground mt-1">
+                  Enter the oracle contract address. Use: 0xba7603E31a7C5989cDF8610557F53117Cab4736f
+                </p>
               </div>
 
               <Button 

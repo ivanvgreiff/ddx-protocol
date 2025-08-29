@@ -27,7 +27,7 @@ class MulticallService {
         {"internalType": "uint256", "name": "blockNumber", "type": "uint256"},
         {"internalType": "bytes[]", "name": "returnData", "type": "bytes[]"}
       ],
-      "stateMutability": "payable",
+      "stateMutability": "view",
       "type": "function"
     }
   ];
@@ -61,8 +61,8 @@ class MulticallService {
         callData: call.callData
       }));
 
-      // Execute multicall
-      const [blockNumber, results] = await this.multicallContract.aggregate(multicallData);
+      // Execute multicall (static call)
+      const [blockNumber, results] = await this.multicallContract.aggregate.staticCall(multicallData);
       
       console.log(`✅ Multicall completed at block ${blockNumber}`);
       

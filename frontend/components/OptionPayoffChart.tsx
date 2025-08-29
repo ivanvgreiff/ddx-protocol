@@ -21,7 +21,7 @@ import {
  */
 
 export type OptionType = "CALL" | "PUT";
-export type PayoffType = "Linear" | "Quadratic" | "Logarithmic" | "Power" | "Sigmoid" | "Sinusoidal";
+export type PayoffType = "Linear" | "Quadratic" | "Logarithmic" | "Power" | "Sigmoid" | "Sinusoidal" | "Polynomial";
 
 export type OptionPayoffChartProps = {
   optionType: OptionType;
@@ -62,6 +62,8 @@ export type OptionPayoffChartProps = {
   sinusoidalAmplitude?: number;
   /** Period for Sinusoidal payoff type (default strike price) */
   sinusoidalPeriod?: number;
+  /** Full pay line for Polynomial payoff type (default 1.0) */
+  polynomialFullPayLine?: number;
 };
 
 const NEON_GREEN = COLORS.LONG; // neon green payoff line for long positions
@@ -112,7 +114,8 @@ function payoff(
   power: number = 2,
   intensity: number = 1.0,
   amplitude: number = 1.0,
-  period: number = K
+  period: number = K,
+  fullPayLine: number = 1.0
 ): number {
   switch (payoffType) {
     case "Linear":
@@ -132,17 +135,32 @@ function payoff(
       const delta = Math.abs(sigmoidValue - 0.5);
       return delta * 2 * K; // Using K as notional for display purposes
     case "Sinusoidal":
-      // Sinusoidal payoff exactly matching SinusoidalGenie.sol contract
-      // notional = strikePrice * positionSize (but for display we use K as notional)
+      // DISPLAY NOTE: Show the sinusoidal curve in [-1,1] domain BEFORE the (1+scaled)/2 mapping to [0,1]
+      // This gives users a clear view of the raw sinusoidal shape before contract's final payout calculation
+      // Contract does: sinVal -> scaled = sinVal * A -> ratio = (1 + scaled) / 2 -> [0,1] payout
+      // Graph shows: sinVal -> scaled = sinVal * A (the [-A, +A] range before [0,1] mapping)
       const notional = K; // Using strike price as notional for display
       const priceDiff = spotPrice - K; // diff = int256(p1) - int256(p0)
       const angle = (priceDiff * 2 * Math.PI) / period; // angle = ((diff * TWO_PI) / int256(period1e18))
       const sinVal = Math.sin(angle); // sinVal in [-1, +1]
-      const scaled = sinVal * amplitude; // scaled = (sinVal * amplitude) / 1e18 -> [-A, +A]
-      const ratio = (1 + scaled) / 2; // ratio1e18 = (scaled + 1e18) / 2 -> [0, 1] fraction
-      // Clamp ratio to [0, 1] just like the contract
-      const clampedRatio = Math.max(0, Math.min(1, ratio));
-      return clampedRatio * notional; // payout = (ratio * notional) / 1e18
+      const scaled = sinVal * amplitude; // scaled = sinVal * A -> [-A, +A] range
+      // Return the scaled sinusoidal value directly (before [0,1] mapping) for clearer visualization
+      return scaled * notional; // Display the raw sinusoidal shape
+    case "Polynomial":
+      // DISPLAY NOTE: Show the raw polynomial y = x^5 - 5x^3 + 4x WITHOUT [0,1] restrictions
+      // This gives users a clear view of the actual polynomial shape without contract's payout constraints
+      // Contract does: y = x^5 - 5x^3 + 4x -> scaled = clamp(y/L, -1, +1) -> ratio = (1 + scaled) / 2
+      // Graph shows: y = x^5 - 5x^3 + 4x (the raw polynomial shape, scaled by fullPayLine)
+      const notionalPoly = K; // Using strike price as notional for display
+      const x = (spotPrice - K) / K; // x = (S - K) / K (dimensionless)
+      // Clamp x to avoid absurd growth/overflow in far tails (same as contract)
+      const X_CLAMP = 10.0;
+      const xClamped = Math.max(-X_CLAMP, Math.min(X_CLAMP, x));
+      // y = x^5 - 5x^3 + 4x
+      const y = Math.pow(xClamped, 5) - 5 * Math.pow(xClamped, 3) + 4 * xClamped;
+      // Show the raw polynomial scaled by fullPayLine for visualization (no [0,1] clamping)
+      const scaledY = y / fullPayLine;
+      return scaledY * notionalPoly; // Display the raw polynomial shape
     case "Logarithmic":
       if (optionType === "CALL") {
         // Logarithmic Call Beta Variant: P = S * log(I(x-K + 1/I)) if x >= K, else 0
@@ -207,6 +225,7 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
     sigmoidIntensity = 1.0,
     sinusoidalAmplitude = 1.0,
     sinusoidalPeriod,
+    polynomialFullPayLine = 1.0,
   } = props;
 
   const K = fromUnits(strikePrice, decimals) ?? 0;
@@ -321,18 +340,53 @@ export default function OptionPayoffChart(props: OptionPayoffChartProps) {
               value = 0; // Neutral at zero crossing
             }
           }
+        } else if (payoffType === 'Polynomial') {
+          // Polynomial Genie: Directional payoff with polynomial curve
+          const notional = K * size; // notional = strikePrice * positionSize
+          const x = (S - K) / K; // x = (S - K) / K (dimensionless)
+          // Clamp x to avoid absurd growth/overflow in far tails (same as contract)
+          const X_CLAMP = 10.0;
+          const xClamped = Math.max(-X_CLAMP, Math.min(X_CLAMP, x));
+          // y = x^5 - 5x^3 + 4x
+          const y = Math.pow(xClamped, 5) - 5 * Math.pow(xClamped, 3) + 4 * xClamped;
+          // scaled = clamp(y / L, -1, +1)
+          const scaledPoly = Math.max(-1, Math.min(1, y / polynomialFullPayLine));
+          
+          // For display purposes, show the directional nature of the polynomial
+          // Positive scaled = long wins, negative scaled = short wins
+          const polynomialPayoff = Math.abs(scaledPoly) * notional / 2; // Magnitude of the payoff
+          
+          if (isShortPosition) {
+            // Short wins when polynomial is negative, loses when polynomial is positive
+            if (scaledPoly < 0) {
+              value = polynomialPayoff; // Profit when polynomial is negative
+            } else if (scaledPoly > 0) {
+              value = -polynomialPayoff; // Loss when polynomial is positive
+            } else {
+              value = 0; // Neutral at zero crossing
+            }
+          } else {
+            // Long wins when polynomial is positive, loses when polynomial is negative
+            if (scaledPoly > 0) {
+              value = polynomialPayoff; // Profit when polynomial is positive
+            } else if (scaledPoly < 0) {
+              value = -polynomialPayoff; // Loss when polynomial is negative
+            } else {
+              value = 0; // Neutral at zero crossing
+            }
+          }
         } else {
           // Linear futures: y = (S - K) * size
           value = (S - K) * size;
         }
       } else {
         // For options contracts: use option payoff logic
-        value = payoff(payoffType, optionType, S, K, payoffPower, sigmoidIntensity, sinusoidalAmplitude, sinusoidalPeriod || K) * size; // Total payoff (not normalized)
+        value = payoff(payoffType, optionType, S, K, payoffPower, sigmoidIntensity, sinusoidalAmplitude, sinusoidalPeriod || K, polynomialFullPayLine) * size; // Total payoff (not normalized)
       }
       
       // For short positions, invert the payoff to show the seller's perspective
-      // (Skip this for Power, Sigmoid, and Sinusoidal futures as they handle position perspective internally)
-      if (isShortPosition && !(isFuturesContract && (payoffType === 'Power' || payoffType === 'Sigmoid' || payoffType === 'Sinusoidal'))) {
+      // (Skip this for Power, Sigmoid, Sinusoidal, and Polynomial futures as they handle position perspective internally)
+      if (isShortPosition && !(isFuturesContract && (payoffType === 'Power' || payoffType === 'Sigmoid' || payoffType === 'Sinusoidal' || payoffType === 'Polynomial'))) {
         value = -value;
       }
       
