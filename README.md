@@ -1,12 +1,12 @@
 # Decentralized Derivatives Exchange Protocol
 
-**DDX** is a fully on-chain protocol for creating, trading, and settling **customizable financial contracts**. Users can define bespoke payoff logic, post collateral, and settle claims automatically using decentralized oracles. The protocol supports modular, composable derivatives logic and is optimized for gas efficiency, security, and permissionless usage.
+**DDX** is a fully on-chain protocol for creating, trading, and settling **customizable financial derivatives**. The protocol offers three main contract types: **Options**, **Futures**, and **Genies** - each with multiple payoff curves and settlement mechanisms. All contracts are settled with decentralized oracles.
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js v16+
-- npm or yarn
+- Node.js v18+
+- npm or pnpm
 - MetaMask browser extension
 - Sepolia testnet ETH (for testing)
 
@@ -35,8 +35,8 @@ npm run dev
 ```
 
 ### Access the Application
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:3001
+- **Frontend**: http://localhost:3000 (Next.js)
+- **Backend API**: http://localhost:3001 (Express)
 
 ---
 
@@ -50,55 +50,71 @@ npm run dev
 
 ## Key Features
 
-- **Custom Payoff Curves**: Deploy contracts with arbitrary payout logic through modular formula contracts.
-- **Trustless Settlement**: Collateralized positions are settled based on on-chain price data (e.g., Chainlink).
-- **Permissionless Deployment**: Anyone can deploy and trade new derivative instruments via factory contracts.
-- **Pluggable Payoff Modules**: Cleanly separated logic allows rapid extension of supported payoff types.
-- **EVM-Compatible**: Designed for Ethereum Layer-2s like Optimism and Arbitrum to ensure low fees.
+- **Three Contract Types**: Options (call/put), Futures (linear/power/sigmoid), and Genies (sinusoidal/polynomial)
+- **Multiple Payoff Curves**: Linear, quadratic, logarithmic, power, sigmoid, sinusoidal, and polynomial payoffs
+- **Physical Settlement**: All contracts settled via delivery of the underlying asset based on oracle price feeds
+- **Zero Premium**: Futures and Genies require no upfront premium payment (this will become optional for Genies)
+- **Modular Architecture**: Factory pattern with minimal proxy contracts for gas efficiency
+- **Oracle Integration**: Uses SimuOracle for price resolution at expiry
+- **Modern Frontend**: Next.js with TypeScript, Tailwind CSS, and comprehensive UI components
 
 ---
 
 ## 🏛️ Protocol Architecture
 
-### **Core Components**
+### **Core Factory Contracts**
 
-**OptionsBook.sol** - The central factory and registry
-- Creates call and put option contracts using minimal proxy pattern (EIP-1167)
-- Manages option lifecycle: creation, funding, premium payments, resolution
-- Handles exercise and reclaim operations for both option types
-- Tracks all option metadata and statistics
+**OptionsBook.sol** - Options factory and registry
+- Creates call and put option contracts with various payoff curves
+- Supports linear, quadratic, and logarithmic payoff functions
+- Manages premium payments and traditional option settlement
+- Uses minimal proxy pattern (EIP-1167) for gas efficiency
 
-**Individual Option Contracts**
-- **CallOptionContract.sol**: Long profits when underlying price > strike price
-- **PutOptionContract.sol**: Long profits when underlying price < strike price
-- Each contract manages its own collateral, expiry, and settlement logic
+**FuturesBook.sol** - Futures factory and registry  
+- Creates linear, power, and sigmoid finite futures contracts
+- Zero-premium contracts with symmetric payoffs
+- Cash-settled based on |S-K| price differences
+- Supports customizable power exponents and sigmoid intensity
 
-**SimuOracle.sol** - Price oracle for settlement
-- Provides price feeds for underlying assets at expiration
-- Supports human-readable prices with automatic scaling
-- Used for automated option resolution and profit calculation
+**GenieBook.sol** - Advanced derivatives factory
+- Creates sinusoidal and polynomial payoff contracts
+- Zero-premium "Genie" contracts with exotic payoff curves
+- Sinusoidal: sin-wave based payouts with configurable amplitude/period
+- Polynomial: custom polynomial payoff functions
 
-### **Option Lifecycle**
+**SimuOracle.sol** - Price oracle (test)
+- Provides price feeds for all contract types at expiration
+- Supports multiple asset pairs with human-readable pricing
+- Used for automated settlement across all contract types
 
-1. **Creation**: Short position holder creates and funds option via OptionsBook
-2. **Entry**: Long position holder pays premium and enters the option (5-minute expiry starts)
-3. **Expiration**: Option expires after 5 minutes
-4. **Resolution**: Oracle price is fetched and stored on-chain
-5. **Exercise/Reclaim**: 
-   - **Profitable options**: Long exercises to claim profits
-   - **Unprofitable options**: Short reclaims collateral
+### **Contract Lifecycle**
 
-### **Token Flow**
+1. **Creation & Funding**: Maker creates contract and deposits collateral via respective Book
+2. **Entry**: Taker enters the opposite side (premium for options, zero for futures/genies)
+3. **Activation**: Contract becomes active with expiry countdown 
+4. **Resolution**: Oracle price is fetched and stored on-chain at expiry
+5. **Settlement**: 
+   - **Options**: Traditional exercise/reclaim based on long/short perspective rsp.
+   - **Futures**: Physical settlement based on |S-K| with winner-takes-all
+   - **Genies**: Complex payoff calculation based on mathematical functions
 
-**Call Options** (Long buys right to purchase underlying at strike price):
-- Short deposits: Underlying tokens (2TK) 
-- Long pays: Strike tokens (MTK) to exercise
-- Long receives: Underlying tokens (2TK)
+### **Token Flow & Settlement**
 
-**Put Options** (Long buys right to sell underlying at strike price):
-- Short deposits: Strike tokens (MTK)
-- Long pays: Underlying tokens (2TK) to exercise  
-- Long receives: Strike tokens (MTK)
+**Options** (Premium required):
+- **Call Options**: Short deposits underlying, long pays premium + exercise price
+- **Put Options**: Short deposits strike tokens, long pays premium + underlying
+- Settlement via traditional exercise/reclaim mechanism
+
+**Futures** (Zero premium, physical delivery):
+- Maker deposits either underlying OR strike tokens (depending on side)
+- Taker enters opposite side with zero premium
+- Settlement: Winner receives |S-K| * position size in underlying asset
+
+**Genies** (Optional premium, exotic payoffs):
+- Same funding model as futures
+- Settlement based on complex mathematical functions:
+  - **Sinusoidal**: Payout = amplitude * sin(2π * (S-K) / period)
+  - **Polynomial**: Custom polynomial function evaluation
 
 ---
 
@@ -106,92 +122,89 @@ npm run dev
 
 ```plaintext
 ddx-protocol/
-├── contracts/                      # Core smart contracts
-│   ├── OptionsBook.sol             # Factory and registry for all options
-│   ├── CallOptionContract.sol      # Individual call option logic
-│   ├── PutOptionContract.sol       # Individual put option logic
-│   ├── SimuOracle.sol              # Mock price oracle for testing
-│   ├── PayoffFormulaInterface.sol  # Interface for modular payoff logic
-│   ├── PayoffLinear.sol            # Linear payoff implementation
-│   └── PayoffDigital.sol           # Binary option payoff implementation
+├── contracts/                      # Smart contracts by category
+│   ├── core/                       # Factory contracts
+│   │   ├── OptionsBook.sol         # Options factory and registry
+│   │   ├── FuturesBook.sol         # Futures factory and registry  
+│   │   └── GenieBook.sol           # Genies factory and registry
+│   ├── options/                    # Option contract implementations
+│   │   ├── calls/                  
+│   │   │   ├── CallOptionContract.sol      # Standard call options
+│   │   │   ├── QuadraticCallOption.sol     # Quadratic payoff calls
+│   │   │   └── LogarithmicCallOption.sol   # Logarithmic payoff calls
+│   │   └── puts/
+│   │       ├── PutOptionContract.sol       # Standard put options
+│   │       ├── QuadraticPutOption.sol      # Quadratic payoff puts
+│   │       └── LogarithmicPutOption.sol    # Logarithmic payoff puts
+│   ├── futures/                    # Futures contract implementations
+│   │   ├── LinearFiniteFutures.sol         # Linear payoff futures
+│   │   ├── PowerFiniteFutures.sol          # Power payoff futures
+│   │   └── SigmoidFiniteFutures.sol        # Sigmoid payoff futures
+│   ├── genies/                     # Genie contract implementations
+│   │   ├── SinusoidalGenie.sol             # Sinusoidal payoff genies
+│   │   └── hPolynomialGenie.sol            # Polynomial payoff genies
+│   └── oracles/
+│       └── SimuOracle.sol                  # Price oracle for settlement
 │
 ├── utils/                          # Contract ABIs and utilities
-│   ├── OptionsBookABI.json         # Factory contract interface
-│   ├── CallOptionContractABI.json  # Call option interface
-│   ├── PutOptionContractABI.json   # Put option interface
+│   ├── *BookABI.json               # Factory contract interfaces
+│   ├── *OptionContractABI.json     # Option contract interfaces
+│   ├── *FuturesABI.json            # Futures contract interfaces
+│   ├── *GenieABI.json              # Genie contract interfaces
 │   ├── SimuOracleABI.json          # Oracle interface
 │   ├── MTKContractABI.json         # Strike token (MTK) interface
-│   └── TwoTKContractABI.json       # Underlying token (2TK) interface
+│   ├── TwoTKContractABI.json       # Underlying token (2TK) interface
+│   ├── MyToken.sol                 # Test token implementations
+│   └── DoubleToken.sol
 │
-├── frontend/                       # React.js web application
-│   ├── src/
-│   │   ├── components/
-│   │   │   └── Header.js           # Navigation header
-│   │   ├── context/
-│   │   │   └── WalletContext.js    # Web3 wallet integration
-│   │   ├── pages/
-│   │   │   ├── Dashboard.js        # Main dashboard page
-│   │   │   ├── CreateOption.js     # Option creation interface
-│   │   │   ├── OptionsMarket.js    # Option trading marketplace
-│   │   │   ├── OptionDetail.js     # Individual option details
-│   │   │   └── MyOptions.js        # User's option portfolio
-│   │   ├── App.js                  # Main React application
-│   │   └── index.js                # Application entry point
-│   ├── package.json                # Frontend dependencies
-│   └── build/                      # Production build output
+├── frontend/                       # Next.js web application
+│   ├── components/                 # React components
+│   │   ├── ui/                     # Radix UI components (40+ components)
+│   │   ├── hero-section.tsx        # Landing page hero
+│   │   ├── trading-interface.tsx   # Main trading interface
+│   │   ├── stats-section.tsx       # Statistics display
+│   │   └── theme-provider.tsx      # Dark/light theme support
+│   ├── hooks/                      # Custom React hooks
+│   ├── lib/                        # Utility functions
+│   ├── styles/                     # Tailwind CSS styles
+│   └── package.json                # Next.js dependencies
 │
-├── backend/                        # Node.js API server
-│   ├── server.js                   # Express server and API routes
-│   ├── resolutionService.js        # Automated option resolution
+├── backend/                        # Node.js Express API
+│   ├── server.js                   # Main server and routes
 │   ├── database.js                 # SQLite database operations
-│   ├── contracts.db                # SQLite database file
 │   └── package.json                # Backend dependencies
 │
-├── script/                         # Deployment scripts
+├── script/                         # Deployment and utilities
 │   ├── Deploy.s.sol                # Foundry deployment script
 │   └── debug-exercise.js           # Testing utilities
 │
-├── test/                           # Smart contract tests
-│   ├── resolveAndExercise.t.sol    # Foundry tests for exercise logic
-│   └── *.test.js                   # JavaScript test files
-│
-├── scripts/                        # Development utilities
-│   ├── dev-setup.sh                # Unix setup script
-│   ├── dev-setup.bat               # Windows setup script
-│   └── setup.js                    # Cross-platform setup
-│
-├── .env.example                    # Environment configuration template
+├── .env.example                    # Environment configuration
 ├── foundry.toml                    # Foundry configuration
 ├── package.json                    # Root project configuration
-└── README.md                       # This file
+└── README.md                       # This documentation
 ```
 
 ---
 
-## 🧮 Payoff Formulas (Extensible)
+## 🧮 Contract Types & Payoff Formulas
 
-The protocol supports modular payoff formulas through the `PayoffFormulaInterface`:
+### **Options (Premium Required)**
+- **Linear Options**: Standard call/put with linear payoffs
+- **Quadratic Options**: Payoff scales quadratically with price difference  
+- **Logarithmic Options**: Payoff scales logarithmically with price difference
 
-**Currently Implemented:**
-- **PayoffQuadratic.sol**: Quadratic payoff (higher premium)
-- **PayoffLogarithmic.sol**: Logarithmic payoff (lower premium)
-- **PayoffBinary.sol**: Binary option payoff (all-or-nothing)
+### **Futures (Zero Premium, Physical Delivery)**
+- **Linear Futures**: Payout = |S - K| * position size
+- **Power Futures**: Payout = |S - K|^n * position size (configurable exponent n)
+- **Sigmoid Futures**: Payout follows sigmoid curve with configurable intensity
 
-**Future Extensions:**
-- Barrier options (knock-in/knock-out)
-- Asian options (path-dependent)
-- Spread strategies (bull/bear spreads)
-- Custom mathematical formulas
-
-**Adding New Payoffs:**
-```solidity
-contract CustomPayoff is PayoffFormulaInterface {
-    function payout(uint256 price) external pure override returns (uint256) {
-        // Your custom payoff logic here
-        return customCalculation(price);
-    }
-}
-```
+### **Genies (Zero Premium, Exotic Payoffs)**
+- **Sinusoidal Genies**: Payout = amplitude * sin(2π * (S-K) / period) + c
+  - Configurable amplitude (0-100% of notional)
+  - Configurable period (wave frequency)
+  - Configurable phase shift
+- **Polynomial Genies**: Custom polynomial payoff functions
+  - Configurable coefficients and degree
 
 ---
 
@@ -199,24 +212,10 @@ contract CustomPayoff is PayoffFormulaInterface {
 
 - **Smart Contracts**: Solidity ^0.8.20, OpenZeppelin libraries
 - **Development**: Foundry framework for testing and deployment
-- **Frontend**: React.js with Web3 integration (ethers.js)
+- **Frontend**: Next.js 15 with TypeScript, Tailwind CSS 4, Radix UI components
 - **Backend**: Node.js/Express with SQLite database
-- **Network**: Ethereum Sepolia testnet (production-ready for mainnet)
+- **Web3 Integration**: ethers.js v6 for blockchain interaction
+- **UI Components**: 40+ Radix UI components with dark/light theme support
+- **Network**: Sepolia testnet (production-ready for Ethereum)
 
 ---
-
-## 📊 Features
-
-✅ **Implemented**:
-- Call and Put option creation and trading
-- Automated oracle-based settlement 
-- Real-time profit/loss calculations
-- MetaMask wallet integration
-- Optimized RPC usage (2 calls vs 150+ previously)
-- Responsive web interface
-
-🚧 **In Development**:
-- Additional payoff formulas
-- Multi-asset support
-- Advanced order types
-- Governance mechanisms

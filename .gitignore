@@ -19,6 +19,8 @@ frontend/build/
 out/
 cache/
 broadcast/
+build/
+build/*
 
 # Logs
 *.log
