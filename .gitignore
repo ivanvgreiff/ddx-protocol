@@ -26,6 +26,7 @@ logs/
 
 # Flattened contracts (generated)
 flattened_*.sol
+artifacts/
 
 # IDE/Editor files
 .vscode/

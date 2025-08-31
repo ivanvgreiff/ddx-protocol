@@ -4,9 +4,9 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 
-import "../contracts/GenieBook.sol";
-import "../contracts/SinusoidalGenie.sol";
-import "../contracts/hPolynomialGenie.sol";
+import "../contracts/core/GenieBook.sol";
+import "../contracts/genies/SinusoidalGenie.sol";
+import "../contracts/genies/hPolynomialGenie.sol";
 
 contract DeployGenieContracts is Script {
     function run() external {

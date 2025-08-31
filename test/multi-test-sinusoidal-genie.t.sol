@@ -3,10 +3,10 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 
-import "../contracts/GenieBook.sol";
-import "../contracts/SinusoidalGenie.sol";
-import "../contracts/hPolynomialGenie.sol";
-import "../contracts/SimuOracle.sol";
+import "../contracts/core/GenieBook.sol";
+import "../contracts/genies/SinusoidalGenie.sol";
+import "../contracts/genies/hPolynomialGenie.sol";
+import "../contracts/oracles/SimuOracle.sol";
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
