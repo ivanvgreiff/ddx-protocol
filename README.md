@@ -1,5 +1,9 @@
 # Decentralized Derivatives Exchange Protocol
 
+This work is no longer being continued. This repo is now ARCHIVED since DDX (Now: Derisking Derivatives & Exchanges) Protocol is pivoting into rate hedging.
+
+---
+
 **DDX** is a fully on-chain protocol for creating, trading, and settling **customizable financial derivatives**. The protocol offers three main contract types: **Options**, **Futures**, and **Genies** - each with multiple payoff curves and settlement mechanisms. All contracts are settled with decentralized oracles.
 
 ## 🚀 Quick Start
