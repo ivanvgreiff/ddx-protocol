@@ -1,6 +1,6 @@
 # Decentralized Derivatives Exchange Protocol
 
-This work is no longer being continued. This repo is now ARCHIVED since DDX (Now: Derisking Derivatives & Exchanges) Protocol is pivoting into rate hedging.
+This work will be pivoting into (Now: Derisking Derivatives & Exchanges) for rate hedging.
 
 ---
 
