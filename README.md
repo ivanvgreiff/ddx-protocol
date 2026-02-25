@@ -1,6 +1,6 @@
 # Decentralized Derivatives Exchange Protocol
 
-This work will be pivoting into (Now: Derisking Derivatives & Exchanges) for rate hedging.
+This work will be pivoting into (Now: Derisking Derivatives & Exchanges) Protocol for rate hedging. Please visit the (Equalization Rate Options Design)[https://github.com/ivanvgreiff/equalization-rate-options-design] repository to see all quantitative designs and analyses of these new instruments, along with their comparison against all other competing on-chain rate derivatives (which as of early 2026 are just swaps via Boros Protocol and perpetual futures via Rho Protocol). The notebooks therein distill all relevant analyses with results and visualizations.
 
 ---
 
